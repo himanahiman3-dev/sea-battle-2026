@@ -55,13 +55,12 @@ io.on('connection', (socket) => {
         socket.isReady = true;
         const currentRoom = rooms.get(roomName);
         
-        // Получаем объекты сокетов всех игроков в комнате
         const players = currentRoom.players.map(id => io.sockets.sockets.get(id)).filter(s => s);
 
         if (players.length === 2) {
             const allReady = players.every(p => p.isReady);
             if (allReady) {
-                // Случайно выбираем, кто ходит первым (0 или 1)
+                // Случайно выбираем, кто ходит первым
                 const first = Math.random() < 0.5 ? 0 : 1;
                 const second = first === 0 ? 1 : 0;
 
@@ -77,14 +76,12 @@ io.on('connection', (socket) => {
 
     socket.on('makeMove', (data) => {
         if (socket.roomName) {
-            // Отправляем строго второму игроку в комнате
             socket.to(socket.roomName).emit('enemyMove', data);
         }
     });
 
     socket.on('shotResult', (data) => {
         if (socket.roomName) {
-            // Возвращаем результат стрелявшему
             socket.to(socket.roomName).emit('updateResult', data);
         }
     });
@@ -94,17 +91,13 @@ io.on('connection', (socket) => {
         if (roomName && rooms.has(roomName)) {
             const currentRoom = rooms.get(roomName);
             
-            // Удаляем игрока из списка комнаты
             currentRoom.players = currentRoom.players.filter(id => id !== socket.id);
             
-            // Если в комнате никого не осталось - удаляем комнату из памяти
             if (currentRoom.players.length === 0) {
                 rooms.delete(roomName);
                 console.log(`Комната ${roomName} удалена (пуста)`);
             } else {
-                // Если кто-то остался - уведомляем его
-                io.to(roomName).emit('waiting', 'Противник покинул игру.');
-                io.to(roomName).emit('enemyDisconnected'); // Можно добавить в клиент для сброса игры
+                io.to(roomName).emit('enemyDisconnected');
             }
         }
         console.log(`Отключен: ${socket.id}`);
@@ -115,3 +108,4 @@ const PORT = process.env.PORT || 3000;
 http.listen(PORT, () => {
     console.log(`СЕРВЕР 2026: http://localhost:${PORT}`);
 });
+

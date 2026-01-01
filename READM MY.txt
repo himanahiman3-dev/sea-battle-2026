@@ -1,6 +1,5 @@
-npm init -y — создаст настройки проекта.
-npm install express socket.io — скачает нужные двигатели для твоей игры.
-node server.js — запустит твой сервер.
+Есть в игре недочеты? пишите discord romanceplanet3
+
 
 
 

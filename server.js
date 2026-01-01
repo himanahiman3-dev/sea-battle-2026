@@ -16,7 +16,7 @@ io.on('connection', (socket) => {
             rooms.set(room, { password: pass, players: [socket.id] });
             socket.join(room);
             socket.roomName = room;
-            socket.emit('waiting', 'Комната создана. Ждем противника...');
+            socket.emit('waiting', 'Комната создана. Ждем друга...');
         } else {
             const currentRoom = rooms.get(room);
             if (currentRoom.password !== pass) return socket.emit('errorMsg', 'Неверный пароль!');
@@ -65,4 +65,4 @@ io.on('connection', (socket) => {
     });
 });
 
-http.listen(3000, () => console.log('SERVER 2026 STARTED ON PORT 3000'));
+http.listen(3000, () => console.log('SERVER 2026: http://localhost:3000'));

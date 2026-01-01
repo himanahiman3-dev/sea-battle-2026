@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Sea Battle Neon 2026</title>
+    <link href="fonts.googleapis.com" rel="stylesheet">
+    <style>
+        :root { --neon-blue: #00f2ff; --neon-red: #ff0055; --bg-dark: #020b1a; }
+        body { background: var(--bg-dark); color: var(--neon-blue); font-family: 'Orbitron', sans-serif; display: flex; flex-direction: column; align-items: center; margin: 0; min-height: 100vh; overflow-x: hidden; }
+        
+        /* ГЛАВНОЕ МЕНЮ */
+        #main-menu { display: flex; flex-direction: column; gap: 20px; padding-top: 50px; text-align: center; }
+        .menu-card { background: rgba(0, 242, 255, 0.05); padding: 25px; border: 2px solid var(--neon-blue); width: 350px; box-shadow: 0 0 20px rgba(0, 242, 255, 0.1); }
+        .hidden { display: none !important; }
+
+        /* ИГРОВОЙ ЭКРАН */
+        #game-screen { width: 100%; display: flex; flex-direction: column; align-items: center; }
+        .game-container { display: flex; gap: 40px; padding: 20px; flex-wrap: wrap; justify-content: center; }
+        .grid { display: grid; grid-template-columns: repeat(10, 40px); grid-template-rows: repeat(10, 40px); gap: 2px; background: rgba(0, 242, 255, 0.1); border: 3px solid var(--neon-blue); }
+        .cell { width: 40px; height: 40px; background: rgba(2, 11, 26, 0.8); cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 20px; transition: 0.2s; }
+        
+        /* СОСТОЯНИЯ КЛЕТОК */
+        .ship { background: var(--neon-blue) !important; box-shadow: inset 0 0 10px #000; }
+        .hit { background: rgba(255, 0, 85, 0.3) !important; animation: shake 0.2s; }
+        .hit::after { content: "💥"; }
+        .miss::after { content: "•"; color: var(--neon-blue); font-size: 30px; }
+        .preview { background: rgba(0, 242, 255, 0.3) !important; }
+
+        /* КНОПКИ И ИНПУТЫ */
+        .btn { padding: 12px; background: none; border: 2px solid var(--neon-blue); color: var(--neon-blue); font-family: 'Orbitron'; cursor: pointer; transition: 0.3s; width: 100%; margin: 5px 0; text-transform: uppercase; }
+        .btn:hover:not(:disabled) { background: var(--neon-blue); color: #000; box-shadow: 0 0 15px var(--neon-blue); }
+        .btn.active { background: var(--neon-blue); color: #000; }
+        .btn:disabled { border-color: #444; color: #444; cursor: not-allowed; }
+        input { background: #000; border: 1px solid var(--neon-blue); color: var(--neon-blue); padding: 12px; font-family: 'Orbitron'; width: 90%; margin-bottom: 10px; text-align: center; }
+        
+        #status-text { height: 70px; font-size: 1.3rem; text-align: center; margin-top: 20px; color: #fff; text-shadow: 0 0 10px var(--neon-blue); }
+        .ship-controls { display: flex; gap: 10px; margin-bottom: 20px; }
+    </style>
+</head>
+<body>
+
+    <!-- ГЛАВНОЕ МЕНЮ -->
+    <div id="main-menu">
+        <h1>SEA BATTLE <span style="color:var(--neon-red)">NEON</span></h1>
+        <div class="menu-card">
+            <h3>МУЛЬТИПЛЕЕР</h3>
+            <input type="text" id="room-id" placeholder="ID КОМНАТЫ">
+            <input type="password" id="room-pass" placeholder="ПАРОЛЬ">
+            <button class="btn" onclick="startMultiplayer()">СОЗДАТЬ / ВОЙТИ</button>
+        </div>
+        <div class="menu-card">
+            <h3>ОДИНОЧНАЯ ИГРА</h3>
+            <button class="btn" onclick="startAI('easy')">ЛЕГКИЙ ИИ</button>
+            <button class="btn" onclick="startAI('hard')">СЛОЖНЫЙ ИИ</button>
+        </div>
+    </div>
+
+    <!-- ИГРОВОЙ ЭКРАН -->
+    <div id="game-screen" class="hidden">
+        <div id="status-text">Загрузка...</div>
+        
+        <div class="ship-controls" id="factory">
+            <button class="btn" style="width: 50px;" id="size-4" onclick="selectType(4)">4</button>
+            <button class="btn" style="width: 50px;" onclick="selectType(3)">3</button>
+            <button class="btn" style="width: 50px;" onclick="selectType(2)">2</button>
+            <button class="btn" style="width: 50px;" onclick="selectType(1)">1</button>
+            <button class="btn" onclick="toggleRotate()">ПОВОРОТ (R)</button>
+        </div>
+
+        <div class="game-container">
+            <div>
+                <p style="text-align: center;">ВАШ ФЛОТ</p>
+                <div id="my-grid" class="grid"></div>
+                <button id="start-btn" class="btn" style="margin-top: 15px;" disabled onclick="readyToBattle()">В БОЙ!</button>
+            </div>
+            <div id="enemy-box" class="hidden">
+                <p style="text-align: center;">РАДАР ВРАГА</p>
+                <div id="enemy-grid" class="grid"></div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const socket = io();
+        const sounds = { 
+            bg: new Audio('bg_music.mp3'), 
+            shot: new Audio('shot.mp3'), 
+            hit: new Audio('hit.mp3'), 
+            miss: new Audio('miss.mp3') 
+        };
+        sounds.bg.loop = true;
+
+        let isAI = false;
+        let aiLevel = 'easy';
+        let gameActive = false;
+        let canMove = false;
+        let myShipsMap = Array(100).fill(null);
+        let myShipsHealth = {};
+        let enemyShipsMap = Array(100).fill(null); 
+        
+        let currentSize = 4;
+        let isVertical = false;
+        let shipLimits = { 4:1, 3:2, 2:3, 1:4 };
+        let currentPlaced = { 4:0, 3:0, 2:0, 1:0 };
+        let playerHits = 0, enemyHits = 0;
+
+        const myGrid = document.getElementById('my-grid');
+        const enemyGrid = document.getElementById('enemy-grid');
+        const status = document.getElementById('status-text');
+
+        // Инициализация сеток
+        for (let i = 0; i < 100; i++) {
+            const mCell = document.createElement('div');
+            mCell.className = 'cell';
+            mCell.id = `my-${i}`;
+            mCell.onclick = () => placeShip(i);
+            mCell.onmouseenter = () => drawPreview(i, true);
+            mCell.onmouseleave = () => drawPreview(i, false);
+            myGrid.appendChild(mCell);
+
+            const eCell = document.createElement('div');
+            eCell.className = 'cell';
+            eCell.id = `enemy-${i}`;
+            eCell.onclick = () => fire(i);
+            enemyGrid.appendChild(eCell);
+        }
+
+        function startMultiplayer() {
+            const room = document.getElementById('room-id').value;
+            const pass = document.getElementById('room-pass').value;
+            if(!room || !pass) return alert("Введите ID и пароль");
+            isAI = false;
+            socket.emit('joinCustomRoom', { room, pass });
+            enterGame();
+        }
+
+        function startAI(level) {
+            isAI = true;
+            aiLevel = level;
+            enterGame();
+            generateAIField();
+            status.innerText = "Расставьте свой флот";
+        }
+
+        function enterGame() {
+            document.getElementById('main-menu').classList.add('hidden');
+            document.getElementById('game-screen').classList.remove('hidden');
+            sounds.bg.play().catch(()=>{});
+        }
+
+        // --- РАССТАНОВКА ---
+        function selectType(s) { currentSize = s; }
+        function toggleRotate() { isVertical = !isVertical; }
+
+        function drawPreview(idx, show) {
+            if (gameActive) return;
+            let coords = getIndices(idx, currentSize, isVertical);
+            if (coords) coords.forEach(i => {
+                const cell = document.getElementById(`my-${i}`);
+                if(cell) cell.classList.toggle('preview', show);
+            });
+        }
+
+        function placeShip(idx) {
+            if (gameActive || currentPlaced[currentSize] >= shipLimits[currentSize]) return;
+            let coords = getIndices(idx, currentSize, isVertical);
+            if (!coords || coords.some(i => myShipsMap[i])) return;
+
+            let id = `s-${Date.now()}`;
+            myShipsHealth[id] = currentSize;
+            coords.forEach(i => {
+                myShipsMap[i] = { id, size: currentSize };
+                document.getElementById(`my-${i}`).classList.add('ship');
+            });
+            currentPlaced[currentSize]++;
+            sounds.shot.play();
+            checkReady();
+        }
+
+        function getIndices(idx, size, vert) {
+            let res = [], r = Math.floor(idx/10), c = idx%10;
+            for(let i=0; i<size; i++) {
+                let nr = vert ? r+i : r, nc = vert ? c : c+i;
+                if(nr>9 || nc>9) return null;
+                res.push(nr*10 + nc);
+            }
+            return res;
+        }
+
+        function checkReady() {
+            let total = Object.values(currentPlaced).reduce((a,b)=>a+b, 0);
+            if (total === 10) document.getElementById('start-btn').disabled = false;
+            status.innerText = `Установлено коралей: ${total}/10`;
+        }
+
+        function readyToBattle() {
+            if (isAI) {
+                gameActive = true;
+                canMove = true;
+                document.getElementById('enemy-box').classList.remove('hidden');
+                document.getElementById('factory').classList.add('hidden');
+                document.getElementById('start-btn').classList.add('hidden');
+                status.innerText = "ВАШ ХОД";
+            } else {
+                socket.emit('playerReady');
+                document.getElementById('start-btn').innerText = "ОЖИДАНИЕ ВРАГА...";
+                document.getElementById('start-btn').disabled = true;
+            }
+        }
+
+        // --- БОЙ ---
+        function fire(idx) {
+            if (!gameActive || !canMove) return;
+            const cell = document.getElementById(`enemy-${idx}`);
+            if (cell.classList.contains('hit') || cell.classList.contains('miss')) return;
+
+            sounds.shot.currentTime = 0;
+            sounds.shot.play();
+
+            if (isAI) {
+                handleAIShot(idx);
+            } else {
+                canMove = false;
+                socket.emit('makeMove', { index: idx });
+            }
+        }
+
+        // --- ЛОГИКА ИИ ---
+        function generateAIField() {
+            // Простая расстановка для ИИ (можно улучшить)
+            let placed = 0;
+            while(placed < 20) {
+                let r = Math.floor(Math.random()*100);
+                if(!enemyShipsMap[r]) { enemyShipsMap[r] = true; placed++; }
+            }
+        }
+
+        function handleAIShot(idx) {
+            const cell = document.getElementById(`enemy-${idx}`);
+            if (enemyShipsMap[idx]) {
+                cell.classList.add('hit');
+                sounds.hit.play();
+                playerHits++;
+                if (playerHits === 20) { status.innerText = "ПОБЕДА!"; gameActive = false; }
+            } else {
+                cell.classList.add('miss');
+                sounds.miss.play();
+                canMove = false;
+                status.innerText = "ХОД ИИ...";
+                setTimeout(aiMove, 1000);
+            }
+        }
+
+        function aiMove() {
+            if (!gameActive) return;
+            let idx = Math.floor(Math.random()*100);
+            let cell = document.getElementById(`my-${idx}`);
+            if(cell.classList.contains('hit') || cell.classList.contains('miss')) return aiMove();
+
+            if (myShipsMap[idx]) {
+                cell.classList.add('hit');
+                sounds.hit.play();
+                enemyHits++;
+                if (enemyHits === 20) { status.innerText = "ПОРАЖЕНИЕ!"; gameActive = false; }
+                else setTimeout(aiMove, 1000);
+            } else {
+                cell.classList.add('miss');
+                sounds.miss.play();
+                canMove = true;
+                status.innerText = "ВАШ ХОД";
+            }
+        }
+
+        // --- СЕТЬ ---
+        socket.on('waiting', (msg) => { status.innerText = msg; });
+        
+        socket.on('errorMsg', (msg) => { alert(msg); location.reload(); });
+
+        socket.on('enemyDisconnected', () => {
+            alert("Противник покинул бой. Вы победили технически!");
+            location.reload();
+        });
+
+        socket.on('gameStart', (data) => {
+            gameActive = true;
+            canMove = data.canMove;
+            document.getElementById('enemy-box').classList.remove('hidden');
+            document.getElementById('factory').classList.add('hidden');
+            document.getElementById('start-btn').classList.add('hidden');
+            status.innerText = canMove ? "ВАШ ХОД" : "ХОД ПРОТИВНИКА";
+        });
+
+        socket.on('enemyMove', (data) => {
+            const cell = document.getElementById(`my-${data.index}`);
+            const ship = myShipsMap[data.index];
+            const isHit = !!ship;
+            cell.classList.add(isHit ? 'hit' : 'miss');
+            if (isHit) {
+                sounds.hit.play();
+                enemyHits++;
+                if(enemyHits === 20) status.innerText = "ВЫ ПРОИГРАЛИ";
+            } else {
+                sounds.miss.play();
+                canMove = true;
+                status.innerText = "ВАШ ХОД";
+            }
+            socket.emit('shotResult', { index: data.index, isHit });
+        });
+
+        socket.on('updateResult', (data) => {
+            const cell = document.getElementById(`enemy-${data.index}`);
+            cell.classList.add(data.isHit ? 'hit' : 'miss');
+            if (data.isHit) {
+                sounds.hit.play();
+                playerHits++;
+                canMove = true;
+                status.innerText = playerHits === 20 ? "ПОБЕДА!" : "ПОПАДАНИЕ! Ваш ход";
+            } else {
+                sounds.miss.play();
+                canMove = false;
+                status.innerText = "ПРОМАХ! Ход врага";
+            }
+        });
+    </script>
+</body>
+</html>

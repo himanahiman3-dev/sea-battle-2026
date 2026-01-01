@@ -17,7 +17,7 @@
         #game-screen { width: 100%; display: flex; flex-direction: column; align-items: center; }
         .game-container { display: flex; gap: 40px; padding: 20px; flex-wrap: wrap; justify-content: center; }
         .grid { display: grid; grid-template-columns: repeat(10, 40px); grid-template-rows: repeat(10, 40px); gap: 2px; background: rgba(0, 242, 255, 0.1); border: 3px solid var(--neon-blue); }
-        .cell { width: 40px; height: 40px; background: rgba(2, 11, 26, 0.8); cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 20px; }
+        .cell { width: 40px; height: 40px; background: rgba(2, 11, 26, 0.8); cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 20px; transition: 0.2s; }
         
         /* СОСТОЯНИЯ КЛЕТОК */
         .ship { background: var(--neon-blue) !important; box-shadow: inset 0 0 10px #000; }
@@ -30,6 +30,7 @@
         .btn { padding: 10px; border: 2px solid var(--neon-blue); color: var(--neon-blue); cursor: pointer; }
         .super-weapons { margin-top: 10px; display: flex; gap: 10px; justify-content: center; }
         .super-weapon-btn { background: #ff9d00; color: black; border-color: #ff9d00; }
+        .disabled-btn { opacity: 0.5; cursor: not-allowed; }
 
         #status-text { height: 70px; font-size: 1.3rem; text-align: center; margin-top: 20px; }
         .kill-msg { color: var(--neon-red); font-weight: bold; }
@@ -87,8 +88,10 @@
 
         let availableWeapons = { airstrike: 1, radar: 1 };
         let activeWeapon = null;
-        // ПВО активны в рядах 4 и 5 (индексы 40-59)
+        // Исправлено: ПВО активны в рядах 40-59 (индексы 40-59)
         const PVO_ROWS = [4, 5]; 
+        // Исправлено: Размеры кораблей для ИИ и расстановки игрока
+        const SHIP_SIZES_TO_PLACE = [4, 3, 3, 2, 2, 2, 1, 1, 1, 1]; 
 
         const myGrid = document.getElementById('my-grid');
         const enemyGrid = document.getElementById('enemy-grid');
@@ -99,13 +102,162 @@
             const eCell = document.createElement('div'); eCell.className = 'cell'; eCell.id = `enemy-${i}`; eCell.onclick = () => fire(i); enemyGrid.appendChild(eCell);
         }
 
-        function startMultiplayer() { /* ... (Код из предыдущего ответа) ... */ }
-        function startAI(level) { /* ... (Код из предыдущего ответа) ... */ }
+        // --- ГЛАВНОЕ МЕНЮ И СТАРТ ИГРЫ ---
+        function startMultiplayer() {
+            const room = document.getElementById('room-id').value;
+            const pass = document.getElementById('room-pass').value;
+            if(!room || !pass) return alert("Введите ID и пароль");
+            isAI = false;
+            socket.emit('joinCustomRoom', { room, pass });
+            enterGame();
+        }
+
+        function startAI(level) {
+            isAI = true;
+            aiLevel = level;
+            enterGame();
+            generateAIField(); // ИИ расставляет корабли сразу
+            setupPlayerPlacementUI();
+            status.innerText = "Расставьте свой флот";
+        }
+
         function enterGame() {
             document.getElementById('main-menu').classList.add('hidden');
             document.getElementById('game-screen').classList.remove('hidden');
             sounds.bg.play().catch(()=>{});
         }
+        
+        function setupPlayerPlacementUI() {
+             const factoryDiv = document.createElement('div');
+             factoryDiv.id = 'factory';
+             factoryDiv.className = 'ship-controls';
+             factoryDiv.innerHTML = `
+                <button class="btn" style="width: 50px;" id="btn-size-4" onclick="selectType(4)">4</button>
+                <button class="btn" style="width: 50px;" id="btn-size-3" onclick="selectType(3)">3</button>
+                <button class="btn" style="width: 50px;" id="btn-size-2" onclick="selectType(2)">2</button>
+                <button class="btn" style="width: 50px;" id="btn-size-1" onclick="selectType(1)">1</button>
+                <button class="btn" onclick="toggleRotate()">ПОВОРОТ (R)</button>
+             `;
+             document.querySelector('.super-weapons').insertAdjacentElement('beforebegin', factoryDiv);
+             selectType(4); 
+             document.addEventListener('keydown', (e) => { if(e.key.toLowerCase() === 'r' || e.key.toLowerCase() === 'к') toggleRotate(); });
+             const startBtn = document.createElement('button');
+             startBtn.id = 'start-btn';
+             startBtn.className = 'btn';
+             startBtn.disabled = true;
+             startBtn.innerText = 'В БОЙ!';
+             startBtn.onclick = readyToBattle;
+             document.querySelector('.game-container > div:first-child').appendChild(startBtn);
+        }
+
+        // --- РАССТАНОВКА ИНСТРУМЕНТЫ (с проверкой соседей) ---
+        let currentSize = 4, isVertical = false, currentPlaced = { 4:0, 3:0, 2:0, 1:0 }, shipLimits = { 4:1, 3:2, 2:3, 1:4 };
+
+        function selectType(s) { 
+            if (currentPlaced[s] < shipLimits[s]) {
+                currentSize = s;
+                document.querySelectorAll('#factory .btn[id^="btn-size-"]').forEach(btn => btn.classList.remove('active'));
+                const selectedBtn = document.getElementById(`btn-size-${s}`);
+                if (selectedBtn) selectedBtn.classList.add('active');
+            }
+        }
+        function toggleRotate() { isVertical = !isVertical; }
+
+        function getIndices(idx, size, vert) {
+            let res = [], r = Math.floor(idx / 10), c = idx % 10;
+            for (let i = 0; i < size; i++) {
+                let nr = vert ? r + i : r, nc = vert ? c : c + i;
+                if (nr > 9 || nc > 9) return null;
+                res.push(nr * 10 + nc);
+            }
+            return res;
+        }
+        
+        function isAreaClear(indices, map) {
+             for (const shipIdx of indices) {
+                let nr = Math.floor(shipIdx / 10), nc = shipIdx % 10;
+                for (let dr = -1; dr <= 1; dr++) {
+                    for (let dc = -1; dc <= 1; dc++) {
+                        let neighborIdx = (nr + dr) * 10 + (nc + dc);
+                        if (neighborIdx >= 0 && neighborIdx < 100 && map[neighborIdx] !== null && !indices.includes(neighborIdx)) {
+                            return false; 
+                        }
+                    }
+                }
+            }
+            return true;
+        }
+
+        function drawPreview(idx, show) {
+            if (gameActive) return;
+            let coords = getIndices(idx, currentSize, isVertical);
+            if (coords) coords.forEach(i => {
+                const cell = document.getElementById(`my-${i}`);
+                if(cell) cell.classList.toggle('preview', show);
+            });
+        }
+
+        function placeShip(idx) {
+            if (gameActive || currentPlaced[currentSize] >= shipLimits[currentSize]) return;
+            let coords = getIndices(idx, currentSize, isVertical);
+            if (!coords || !isAreaClear(coords, myShipsMap)) {
+                return alert("Нельзя ставить корабли вплотную или за границей поля!");
+            }
+            let id = `s-${Date.now()}`;
+            myShipsHealth[id] = currentSize;
+            coords.forEach(i => {
+                myShipsMap[i] = { id, size: currentSize };
+                document.getElementById(`my-${i}`).classList.add('ship');
+            });
+            currentPlaced[currentSize]++;
+            sounds.shot.play();
+            checkReady();
+            updateShipButtons();
+        }
+
+        function updateShipButtons() {
+            for (const size in shipLimits) {
+                const btn = document.getElementById(`btn-size-${size}`);
+                if (btn) {
+                   if (currentPlaced[size] >= shipLimits[size]) {
+                        btn.disabled = true;
+                        btn.classList.remove('active');
+                   } else {
+                        btn.disabled = false;
+                   }
+                }
+            }
+            for (const size in shipLimits) {
+                if (currentPlaced[size] < shipLimits[size]) {
+                    selectType(parseInt(size));
+                    break;
+                }
+            }
+        }
+
+        function checkReady() {
+            let total = Object.values(currentPlaced).reduce((a,b)=>a+b, 0);
+            if (total === 10) document.getElementById('start-btn').disabled = false;
+            status.innerText = `Установлено коралей: ${total}/10`;
+        }
+
+        function readyToBattle() {
+            if (isAI) {
+                gameActive = true;
+                canMove = true;
+                document.getElementById('enemy-box').classList.remove('hidden');
+                document.getElementById('factory').classList.add('hidden');
+                document.getElementById('start-btn').classList.add('hidden');
+                status.innerText = "ВАШ ХОД";
+            } else {
+                socket.emit('playerReady');
+                document.getElementById('start-btn').innerText = "ОЖИДАНИЕ ВРАГА...";
+                document.getElementById('start-btn').disabled = true;
+            }
+            updateWeaponButtons();
+        }
+
+        // --- БОЙ ---
         function fire(idx) {
             if (!gameActive || !canMove) return;
             if (activeWeapon) {
@@ -118,92 +270,165 @@
                 else { canMove = false; socket.emit('makeMove', { index: idx }); }
             }
         }
-        function handleAIShot(idx) { /* ... (Код из предыдущего ответа) ... */ }
-        function aiMove() { /* ... (Код из предыдущего ответа) ... */ }
+        
+        function updateWeaponButtons() {
+            if (availableWeapons.airstrike === 0) document.getElementById('btn-airstrike').classList.add('disabled-btn');
+            if (availableWeapons.radar === 0) document.getElementById('btn-radar').classList.add('disabled-btn');
+        }
 
-
-        // --- СУПЕРОРУЖИЕ ЛОГИКА ---
         function activateSuperWeapon(weaponType) {
             if (!gameActive || availableWeapons[weaponType] === 0 || activeWeapon === weaponType) return;
             activeWeapon = weaponType;
-            status.innerText = `Выберите квадрат для ${weaponType === 'airstrike' ? 'авиаудара 1x4' : 'сканирования радаром 3x3'}.`;
-            // Здесь нужна логика подсветки поля при наведении, как при расстановке
+            status.innerText = `Выберите квадрат для ${weaponType === 'airstrike' ? 'авиаудара (1х4)' : 'сканирования радаром (3х3)'}.`;
         }
-
+        
         function useSuperWeapon(idx) {
+            let coords;
             if (activeWeapon === 'airstrike') {
-                // ... Логика определения 1x4 области ...
-                if (isAI) {
-                    // ИИ обработка авиаудара
-                } else {
-                    socket.emit('useAirstrike', { index: idx });
-                    availableWeapons.airstrike--;
-                    document.getElementById('btn-airstrike').disabled = true;
-                }
+                 coords = getIndices(idx, 4, false); // Авиаудар всегда горизонтальный 1х4
+                 if (!coords) return alert("Нельзя применить здесь авиаудар!");
+                 if (isAI) handleAirstrikeAI(coords);
+                 else socket.emit('useAirstrike', { indices: coords });
+                 availableWeapons.airstrike--;
             } else if (activeWeapon === 'radar') {
-                 // ... Логика определения 3x3 области ...
-                if (isAI) {
-                    // ИИ обработка радара
-                } else {
-                    socket.emit('useRadar', { index: idx });
-                    availableWeapons.radar--;
-                    document.getElementById('btn-radar').disabled = true;
-                }
+                 let r = Math.floor(idx/10), c = idx%10;
+                 coords = [];
+                 for(let dr = -1; dr <= 1; dr++) for(let dc = -1; dc <= 1; dc++) {
+                    let tempIdx = (r + dr) * 10 + (c + dc);
+                    if(tempIdx >= 0 && tempIdx < 100 && (r + dr) >= 0 && (r + dr) < 10 && (c + dc) >= 0 && (c + dc) < 10) coords.push(tempIdx);
+                 }
+                 if (isAI) handleRadarAI(coords);
+                 else socket.emit('useRadar', { indices: coords });
+                 availableWeapons.radar--;
             }
             activeWeapon = null;
-            canMove = false; // Ход заканчивается после применения супероружия
+            canMove = false;
+            updateWeaponButtons();
         }
 
-        // --- СЕТЕВЫЕ ОБРАБОТЧИКИ СУПЕРОРУЖИЯ ---
-        socket.on('enemyAirstrike', (data) => {
-            // Обработка получения вражеского авиаудара
-            const targets = []; // ... логика определения 1x4 зоны из data.index ...
-            let pvoActivated = false;
-            // Проверка ПВО
-            for (const targetIdx of targets) {
-                if (PVO_ROWS.includes(Math.floor(targetIdx / 10))) {
-                    pvoActivated = true;
-                    alert("ВАШЕ ПВО СБИЛО АВИАУДАР ПРОТИВНИКА!");
-                    break;
+        // --- ЛОГИКА ИИ С СУПЕРОРУЖИЕМ ---
+        function generateAIField() {
+            for (const size of SHIP_SIZES_TO_PLACE) {
+                let placed = false;
+                while (!placed) {
+                    let vertical = Math.random() > 0.5;
+                    let startIdx = Math.floor(Math.random() * 100);
+                    let coords = getIndices(startIdx, size, vertical); 
+                    if (coords && isAreaClear(coords, enemyShipsMap)) {
+                        const id = `ai-${Date.now()}-${size}`;
+                        enemyShipsHealth[id] = size;
+                        coords.forEach(i => { enemyShipsMap[i] = { id, size }; });
+                        placed = true;
+                    }
                 }
             }
+        }
 
-            const results = targets.map(idx => {
-                const isHit = !pvoActivated && !!myShipsMap[idx];
-                // ... обновление UI (hit/miss) ...
-                return { index: idx, isHit };
-            });
-            socket.emit('airstrikeResult', { results });
+        function handleAirstrikeAI(indices) {
+            let pvoActivated = false;
+            for (const idx of indices) { if (PVO_ROWS.includes(Math.floor(idx / 10))) pvoActivated = true; }
+            if (pvoActivated) { alert("ПВО ИИ СБИЛО ВАШ АВИАУДАР!"); canMove = false; setTimeout(aiMove, 1000); return; }
+            for (const idx of indices) {
+                 const cell = document.getElementById(`enemy-${idx}`);
+                 if (cell.classList.contains('hit') || cell.classList.contains('miss')) continue;
+                 const shipData = enemyShipsMap[idx];
+                 if (shipData) {
+                    cell.classList.add('hit'); sounds.hit.play(); enemyShipsHealth[shipData.id]--; playerHits++;
+                    if (enemyShipsHealth[shipData.id] === 0) status.innerHTML = `<span class="kill-msg">УБИТ ${shipData.size}-ПАЛУБНЫЙ!</span>`;
+                 } else { cell.classList.add('miss'); sounds.miss.play(); }
+            }
+            if (playerHits === WIN_SCORE) { status.innerText = "ПОБЕДА!"; gameActive = false; }
+            else { canMove = false; setTimeout(aiMove, 1000); }
+        }
+
+        function handleRadarAI(indices) {
+            let found = false;
+            for (const idx of indices) { if (enemyShipsMap[idx]) found = true; document.getElementById(`enemy-${idx}`).classList.add('radar-scan'); }
+            if (found) alert("РАДАР ЧТО-ТО НАШЕЛ В СЕКТОРЕ!"); else alert("СЕКТОР ЧИСТ.");
+            canMove = false; setTimeout(aiMove, 1000);
+        }
+
+        function handleAIShot(idx) {
+            const cell = document.getElementById(`enemy-${idx}`);
+            const shipData = enemyShipsMap[idx];
+            let killedSize = 0;
+            if (shipData) {
+                cell.classList.add('hit'); sounds.hit.play(); enemyShipsHealth[shipData.id]--;
+                if (enemyShipsHealth[shipData.id] === 0) killedSize = shipData.size;
+                playerHits++;
+                if (killedSize > 0) status.innerHTML = `<span class="kill-msg">УБИТ ${killedSize}-ПАЛУБНЫЙ!</span>`;
+                if (playerHits === WIN_SCORE) { status.innerText = "ПОБЕДА!"; gameActive = false; }
+            } else { cell.classList.add('miss'); sounds.miss.play(); canMove = false; status.innerText = "ХОД ИИ..."; setTimeout(aiMove, 1000); }
+        }
+
+        function aiMove() {
+            if (!gameActive) return;
+            let idx = Math.floor(Math.random()*100);
+            let cell = document.getElementById(`my-${idx}`);
+            if(cell.classList.contains('hit') || cell.classList.contains('miss')) return aiMove();
+            if (myShipsMap[idx]) {
+                cell.classList.add('hit'); sounds.hit.play(); enemyHits++;
+                if (enemyHits === WIN_SCORE) { status.innerText = "ПОРАЖЕНИЕ!"; gameActive = false; }
+                else setTimeout(aiMove, 1000); 
+            } else { cell.classList.add('miss'); sounds.miss.play(); canMove = true; status.innerText = "ВАШ ХОД"; }
+        }
+
+        // --- СЕТЬ ---
+        socket.on('waiting', (msg) => { status.innerText = msg; });
+        socket.on('errorMsg', (msg) => { alert(msg); location.reload(); });
+        socket.on('enemyDisconnected', () => { alert("Противник покинул бой."); location.reload(); });
+        socket.on('gameStart', (data) => {
+            gameActive = true; canMove = data.canMove;
+            document.getElementById('enemy-box').classList.remove('hidden');
+            // При сетевой игре UI расстановки не нужен
+            if(document.getElementById('factory')) document.getElementById('factory').classList.add('hidden'); 
+            if(document.getElementById('start-btn')) document.getElementById('start-btn').classList.add('hidden');
+            status.innerText = canMove ? "ВАШ ХОД" : "ХОД ПРОТИВНИКА";
+            updateWeaponButtons();
+        });
+        
+        socket.on('enemyMove', (data) => {
+            const cell = document.getElementById(`my-${data.index}`); const ship = myShipsMap[data.index]; const isHit = !!ship;
+            cell.classList.add(isHit ? 'hit' : 'miss');
+            if (isHit) { sounds.hit.play(); enemyHits++; if(enemyHits === WIN_SCORE) { status.innerText = "ВЫ ПРОИГРАЛИ"; gameActive = false; } }
+            else { sounds.miss.play(); canMove = true; status.innerText = "ВАШ ХОД"; }
+            socket.emit('shotResult', { index: data.index, isHit });
+            checkGameOver(); // <-- Добавлено
         });
 
+        socket.on('updateResult', (data) => {
+            const cell = document.getElementById(`enemy-${data.index}`); cell.classList.add(data.isHit ? 'hit' : 'miss');
+            if (data.isHit) { sounds.hit.play(); playerHits++; canMove = true; status.innerText = playerHits === WIN_SCORE ? "ПОБЕДА!" : "ПОПАДАНИЕ! Ваш ход"; }
+            else { sounds.miss.play(); canMove = false; status.innerText = "ПРОМАХ! Ход врага"; }
+            checkGameOver(); // <-- Добавлено
+        });
+
+        // Новые обработчики результатов супероружия для сетевой игры
         socket.on('updateAirstrikeResult', (data) => {
-            // Обновление UI игрока, который применил авиаудар, на основе data.results
-            canMove = true;
-        });
-
-        socket.on('enemyRadar', (data) => {
-             // Обработка получения вражеского радара
-             const targets = []; // ... логика определения 3x3 зоны из data.index ...
-             let found = false;
-             for (const targetIdx of targets) {
-                 if (!!myShipsMap[targetIdx]) {
-                     found = true;
-                     break;
+            for (const result of data.results) {
+                 const cell = document.getElementById(`enemy-${result.index}`);
+                 if (cell.classList.contains('hit') || cell.classList.contains('miss')) continue;
+                 if (result.isHit) {
+                    cell.classList.add('hit'); sounds.hit.play(); playerHits++;
+                 } else {
+                    cell.classList.add('miss'); sounds.miss.play();
                  }
-             }
-             // PVO не сбивает радар
-             socket.emit('radarResult', { found });
+            }
+            if (playerHits === WIN_SCORE) status.innerText = "ПОБЕДА!";
+            else { canMove = true; status.innerText = "Ваш ход (авиаудар завершен)"; }
         });
 
         socket.on('updateRadarResult', (data) => {
-            // Обновление UI игрока, который применил радар
-            if (data.found) alert("РАДАР ЧТО-ТО НАШЕЛ В СЕКТОРЕ!");
-            else alert("СЕКТОР ЧИСТ.");
-            canMove = true;
+            if (data.found) alert("РАДАР ЧТО-ТО НАШЕЛ В СЕКТОРЕ!"); else alert("СЕКТОР ЧИСТ.");
+            canMove = true; status.innerText = "Ваш ход (сканирование завершено)";
         });
-        
-        // ... (остальные обработчики socket.on: waiting, errorMsg, enemyDisconnected, gameStart, enemyMove, updateResult) ...
 
+        function checkGameOver() {
+            if (playerHits === WIN_SCORE || enemyHits === WIN_SCORE) {
+                gameActive = false;
+                status.innerText = playerHits === WIN_SCORE ? "ПОБЕДА!" : "ПОРАЖЕНИЕ!";
+            }
+        }
     </script>
 </body>
 </html>

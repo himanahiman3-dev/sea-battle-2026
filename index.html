@@ -30,7 +30,7 @@
         .btn { padding: 12px; background: none; border: 2px solid var(--neon-blue); color: var(--neon-blue); font-family: 'Orbitron'; cursor: pointer; transition: 0.3s; width: 100%; margin: 5px 0; text-transform: uppercase; }
         .btn:hover:not(:disabled) { background: var(--neon-blue); color: #000; box-shadow: 0 0 15px var(--neon-blue); }
         .btn.active { background: var(--neon-blue); color: #000; }
-        .btn:disabled { border-color: #444; color: #444; cursor: not-allowed; }
+        .btn:disabled { border-color: #444; color: #444; cursor: not-allowed; opacity: 0.5; }
         input { background: #000; border: 1px solid var(--neon-blue); color: var(--neon-blue); padding: 12px; font-family: 'Orbitron'; width: 90%; margin-bottom: 10px; text-align: center; }
         
         #status-text { height: 70px; font-size: 1.3rem; text-align: center; margin-top: 20px; color: #fff; text-shadow: 0 0 10px var(--neon-blue); }
@@ -61,9 +61,9 @@
         <div id="status-text">Загрузка...</div>
         
         <div class="ship-controls" id="factory">
-            <button class="btn" style="width: 50px;" id="size-4" onclick="selectType(4)">4</button>
-            <button class="btn" style="width: 50px;" onclick="selectType(3)">3</button>
-            <button class="btn" style="width: 50px;" onclick="selectType(2)">2</button>
+            <button class="btn" style="width: 50px;" id="btn-size-4" onclick="selectType(4)">4</button>
+            <button class="btn" style="width: 50px;" id="btn-size-3" onclick="selectType(3)">3</button>
+            <button class="btn" style="width: 50px;" id="btn-size-2" onclick="selectType(2)">2</button>
             <button class="btn" style="width: 50px;" onclick="selectType(1)">1</button>
             <button class="btn" onclick="toggleRotate()">ПОВОРОТ (R)</button>
         </div>
@@ -107,6 +107,8 @@
         let currentPlaced = { 4:0, 3:0, 2:0, 1:0 };
         let playerHits = 0, enemyHits = 0;
         const WIN_SCORE = 20;
+        // Исправлено: массив размеров кораблей для ИИ
+        const SHIP_SIZES_TO_PLACE = [4, 3, 3, 2, 2, 2, 1, 1, 1, 1]; 
 
         const myGrid = document.getElementById('my-grid');
         const enemyGrid = document.getElementById('enemy-grid');
@@ -152,7 +154,15 @@
         }
 
         // --- РАССТАНОВКА ИНСТРУМЕНТЫ ---
-        function selectType(s) { currentSize = s; }
+        function selectType(s) { 
+            if (currentPlaced[s] < shipLimits[s]) {
+                currentSize = s;
+                document.querySelectorAll('#factory .btn[id^="btn-size-"]').forEach(btn => {
+                    btn.classList.remove('active');
+                });
+                document.getElementById(`btn-size-${s}`).classList.add('active');
+            }
+        }
         function toggleRotate() { isVertical = !isVertical; }
 
         function drawPreview(idx, show) {
@@ -164,21 +174,41 @@
             });
         }
         
-        function getIndices(idx, size, vert) {
-            let res = [], r = Math.floor(idx/10), c = idx%10;
-            for(let i=0; i<size; i++) {
-                let nr = vert ? r+i : r, nc = vert ? c : c+i;
-                if(nr>9 || nc>9) return null;
-                res.push(nr*10 + nc);
+        function getIndices(idx, size, vert, checkNeighbors = false) {
+            let res = [];
+            let r = Math.floor(idx / 10), c = idx % 10;
+            
+            for (let i = 0; i < size; i++) {
+                let nr = vert ? r + i : r, nc = vert ? c : c + i;
+                if (nr > 9 || nc > 9) return null;
+                res.push(nr * 10 + nc);
             }
+
+            if (checkNeighbors) {
+                for (const shipIdx of res) {
+                    let nr = Math.floor(shipIdx / 10), nc = shipIdx % 10;
+                    for (let dr = -1; dr <= 1; dr++) {
+                        for (let dc = -1; dc <= 1; dc++) {
+                            let neighborIdx = (nr + dr) * 10 + (nc + dc);
+                            // Проверяем наличие соседа в myShipsMap, исключая текущие координаты корабля
+                            if (neighborIdx >= 0 && neighborIdx < 100 && myShipsMap[neighborIdx] !== null && !res.includes(neighborIdx)) {
+                                return null; 
+                            }
+                        }
+                    }
+                }
+            }
+
             return res;
         }
 
         // --- РАССТАНОВКА ИГРОКА ---
         function placeShip(idx) {
             if (gameActive || currentPlaced[currentSize] >= shipLimits[currentSize]) return;
-            let coords = getIndices(idx, currentSize, isVertical);
-            if (!coords || coords.some(i => myShipsMap[i])) return;
+            let coords = getIndices(idx, currentSize, isVertical, true); 
+            if (!coords) {
+                return alert("Нельзя ставить корабли вплотную или за границей поля!");
+            }
 
             let id = `s-${Date.now()}`;
             myShipsHealth[id] = currentSize;
@@ -189,6 +219,25 @@
             currentPlaced[currentSize]++;
             sounds.shot.play();
             checkReady();
+            updateShipButtons();
+        }
+
+        function updateShipButtons() {
+            for (const size in shipLimits) {
+                const btn = document.getElementById(`btn-size-${size}`);
+                if (currentPlaced[size] >= shipLimits[size]) {
+                    btn.disabled = true;
+                    btn.classList.remove('active');
+                } else {
+                    btn.disabled = false;
+                }
+            }
+            for (const size in shipLimits) {
+                if (currentPlaced[size] < shipLimits[size]) {
+                    selectType(parseInt(size));
+                    break;
+                }
+            }
         }
 
         function checkReady() {
@@ -231,20 +280,16 @@
 
         // --- ЛОГИКА ИИ ---
         function generateAIField() {
-            // Исправлено: массив размеров кораблей для ИИ
-            let shipSizes = [4, 3, 3, 2, 2, 2, 1, 1, 1, 1];
-            let idCounter = 0;
-
-            for (const size of shipSizes) {
+            for (const size of SHIP_SIZES_TO_PLACE) {
                 let placed = false;
                 while (!placed) {
                     let vertical = Math.random() > 0.5;
                     let startIdx = Math.floor(Math.random() * 100);
-                    let coords = getIndices(startIdx, size, vertical);
+                    // ИИ использует свою версию проверки, чтобы не зависнуть в цикле
+                    let coords = getIndices(startIdx, size, vertical); 
 
-                    // Проверяем, что корабль помещается и не пересекается
                     if (coords && !coords.some(i => enemyShipsMap[i])) {
-                        const id = `ai-${idCounter++}`;
+                        const id = `ai-${Date.now()}-${size}`;
                         enemyShipsHealth[id] = size;
                         coords.forEach(i => {
                             enemyShipsMap[i] = { id, size };
@@ -268,8 +313,10 @@
                 playerHits++;
                 if (killedSize > 0) {
                      status.innerHTML = `<span class="kill-msg">УБИТ ${killedSize}-ПАЛУБНЫЙ!</span>`;
+                } else if (playerHits === WIN_SCORE) { 
+                    status.innerText = "ПОБЕДА!"; 
                 }
-                if (playerHits === WIN_SCORE) { status.innerText = "ПОБЕДА!"; gameActive = false; }
+                if (playerHits === WIN_SCORE) { gameActive = false; }
             } else {
                 cell.classList.add('miss');
                 sounds.miss.play();
@@ -283,7 +330,6 @@
             if (!gameActive) return;
             let idx = Math.floor(Math.random()*100);
             let cell = document.getElementById(`my-${idx}`);
-            // Проверка, чтобы ИИ не стрелял дважды в одно место
             if(cell.classList.contains('hit') || cell.classList.contains('miss')) return aiMove();
 
             if (myShipsMap[idx]) {
@@ -291,7 +337,7 @@
                 sounds.hit.play();
                 enemyHits++;
                 if (enemyHits === WIN_SCORE) { status.innerText = "ПОРАЖЕНИЕ!"; gameActive = false; }
-                else setTimeout(aiMove, 1000); // ИИ ходит еще раз, если попал
+                else setTimeout(aiMove, 1000); 
             } else {
                 cell.classList.add('miss');
                 sounds.miss.play();

@@ -228,7 +228,6 @@
 
         // --- ЛОГИКА ИИ ---
         function generateAIField() {
-            // Простая расстановка для ИИ (можно улучшить)
             let placed = 0;
             while(placed < 20) {
                 let r = Math.floor(Math.random()*100);
@@ -275,6 +274,7 @@
         // --- СЕТЬ ---
         socket.on('waiting', (msg) => { status.innerText = msg; });
         
+        // Добавлены обработчики ошибок и дисконнекта
         socket.on('errorMsg', (msg) => { alert(msg); location.reload(); });
 
         socket.on('enemyDisconnected', () => {

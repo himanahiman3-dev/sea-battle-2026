@@ -35,6 +35,7 @@
         
         #status-text { height: 70px; font-size: 1.3rem; text-align: center; margin-top: 20px; color: #fff; text-shadow: 0 0 10px var(--neon-blue); }
         .ship-controls { display: flex; gap: 10px; margin-bottom: 20px; }
+        .kill-msg { color: var(--neon-red); font-weight: bold; }
     </style>
 </head>
 <body>
@@ -98,18 +99,19 @@
         let myShipsMap = Array(100).fill(null);
         let myShipsHealth = {};
         let enemyShipsMap = Array(100).fill(null); 
+        let enemyShipsHealth = {};
         
         let currentSize = 4;
         let isVertical = false;
         let shipLimits = { 4:1, 3:2, 2:3, 1:4 };
         let currentPlaced = { 4:0, 3:0, 2:0, 1:0 };
         let playerHits = 0, enemyHits = 0;
+        const WIN_SCORE = 20;
 
         const myGrid = document.getElementById('my-grid');
         const enemyGrid = document.getElementById('enemy-grid');
         const status = document.getElementById('status-text');
 
-        // Инициализация сеток
         for (let i = 0; i < 100; i++) {
             const mCell = document.createElement('div');
             mCell.className = 'cell';
@@ -149,7 +151,7 @@
             sounds.bg.play().catch(()=>{});
         }
 
-        // --- РАССТАНОВКА ---
+        // --- РАССТАНОВКА ИНСТРУМЕНТЫ ---
         function selectType(s) { currentSize = s; }
         function toggleRotate() { isVertical = !isVertical; }
 
@@ -161,7 +163,18 @@
                 if(cell) cell.classList.toggle('preview', show);
             });
         }
+        
+        function getIndices(idx, size, vert) {
+            let res = [], r = Math.floor(idx/10), c = idx%10;
+            for(let i=0; i<size; i++) {
+                let nr = vert ? r+i : r, nc = vert ? c : c+i;
+                if(nr>9 || nc>9) return null;
+                res.push(nr*10 + nc);
+            }
+            return res;
+        }
 
+        // --- РАССТАНОВКА ИГРОКА ---
         function placeShip(idx) {
             if (gameActive || currentPlaced[currentSize] >= shipLimits[currentSize]) return;
             let coords = getIndices(idx, currentSize, isVertical);
@@ -176,16 +189,6 @@
             currentPlaced[currentSize]++;
             sounds.shot.play();
             checkReady();
-        }
-
-        function getIndices(idx, size, vert) {
-            let res = [], r = Math.floor(idx/10), c = idx%10;
-            for(let i=0; i<size; i++) {
-                let nr = vert ? r+i : r, nc = vert ? c : c+i;
-                if(nr>9 || nc>9) return null;
-                res.push(nr*10 + nc);
-            }
-            return res;
         }
 
         function checkReady() {
@@ -228,20 +231,45 @@
 
         // --- ЛОГИКА ИИ ---
         function generateAIField() {
-            let placed = 0;
-            while(placed < 20) {
-                let r = Math.floor(Math.random()*100);
-                if(!enemyShipsMap[r]) { enemyShipsMap[r] = true; placed++; }
+            // Исправлено: массив размеров кораблей для ИИ
+            let shipSizes = [4, 3, 3, 2, 2, 2, 1, 1, 1, 1];
+            let idCounter = 0;
+
+            for (const size of shipSizes) {
+                let placed = false;
+                while (!placed) {
+                    let vertical = Math.random() > 0.5;
+                    let startIdx = Math.floor(Math.random() * 100);
+                    let coords = getIndices(startIdx, size, vertical);
+
+                    // Проверяем, что корабль помещается и не пересекается
+                    if (coords && !coords.some(i => enemyShipsMap[i])) {
+                        const id = `ai-${idCounter++}`;
+                        enemyShipsHealth[id] = size;
+                        coords.forEach(i => {
+                            enemyShipsMap[i] = { id, size };
+                        });
+                        placed = true;
+                    }
+                }
             }
         }
 
         function handleAIShot(idx) {
             const cell = document.getElementById(`enemy-${idx}`);
-            if (enemyShipsMap[idx]) {
+            const shipData = enemyShipsMap[idx];
+            let killedSize = 0;
+
+            if (shipData) {
                 cell.classList.add('hit');
                 sounds.hit.play();
+                enemyShipsHealth[shipData.id]--;
+                if (enemyShipsHealth[shipData.id] === 0) killedSize = shipData.size;
                 playerHits++;
-                if (playerHits === 20) { status.innerText = "ПОБЕДА!"; gameActive = false; }
+                if (killedSize > 0) {
+                     status.innerHTML = `<span class="kill-msg">УБИТ ${killedSize}-ПАЛУБНЫЙ!</span>`;
+                }
+                if (playerHits === WIN_SCORE) { status.innerText = "ПОБЕДА!"; gameActive = false; }
             } else {
                 cell.classList.add('miss');
                 sounds.miss.play();
@@ -255,14 +283,15 @@
             if (!gameActive) return;
             let idx = Math.floor(Math.random()*100);
             let cell = document.getElementById(`my-${idx}`);
+            // Проверка, чтобы ИИ не стрелял дважды в одно место
             if(cell.classList.contains('hit') || cell.classList.contains('miss')) return aiMove();
 
             if (myShipsMap[idx]) {
                 cell.classList.add('hit');
                 sounds.hit.play();
                 enemyHits++;
-                if (enemyHits === 20) { status.innerText = "ПОРАЖЕНИЕ!"; gameActive = false; }
-                else setTimeout(aiMove, 1000);
+                if (enemyHits === WIN_SCORE) { status.innerText = "ПОРАЖЕНИЕ!"; gameActive = false; }
+                else setTimeout(aiMove, 1000); // ИИ ходит еще раз, если попал
             } else {
                 cell.classList.add('miss');
                 sounds.miss.play();
@@ -273,10 +302,7 @@
 
         // --- СЕТЬ ---
         socket.on('waiting', (msg) => { status.innerText = msg; });
-        
-        // Добавлены обработчики ошибок и дисконнекта
         socket.on('errorMsg', (msg) => { alert(msg); location.reload(); });
-
         socket.on('enemyDisconnected', () => {
             alert("Противник покинул бой. Вы победили технически!");
             location.reload();
@@ -299,7 +325,7 @@
             if (isHit) {
                 sounds.hit.play();
                 enemyHits++;
-                if(enemyHits === 20) status.innerText = "ВЫ ПРОИГРАЛИ";
+                if(enemyHits === WIN_SCORE) status.innerText = "ВЫ ПРОИГРАЛИ";
             } else {
                 sounds.miss.play();
                 canMove = true;
@@ -315,7 +341,7 @@
                 sounds.hit.play();
                 playerHits++;
                 canMove = true;
-                status.innerText = playerHits === 20 ? "ПОБЕДА!" : "ПОПАДАНИЕ! Ваш ход";
+                status.innerText = playerHits === WIN_SCORE ? "ПОБЕДА!" : "ПОПАДАНИЕ! Ваш ход";
             } else {
                 sounds.miss.play();
                 canMove = false;

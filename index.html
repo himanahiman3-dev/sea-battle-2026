@@ -2,64 +2,56 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Sea Battle Neon 2026</title>
     <link href="fonts.googleapis.com" rel="stylesheet">
     <style>
         :root { --neon-blue: #00f2ff; --neon-red: #ff0055; --bg-dark: #020b1a; }
         body { background: var(--bg-dark); color: var(--neon-blue); font-family: 'Orbitron', sans-serif; display: flex; flex-direction: column; align-items: center; margin: 0; min-height: 100vh; overflow-x: hidden; }
         #main-menu { display: flex; flex-direction: column; gap: 20px; padding-top: 50px; text-align: center; }
-        .menu-card { background: rgba(0, 242, 255, 0.05); padding: 25px; border: 2px solid var(--neon-blue); width: 350px; box-shadow: 0 0 20px rgba(0, 242, 255, 0.1); }
+        .menu-card { background: rgba(0, 242, 255, 0.05); padding: 25px; border: 2px solid var(--neon-blue); width: 320px; box-shadow: 0 0 20px rgba(0, 242, 255, 0.1); }
         .hidden { display: none !important; }
-        #game-screen { width: 100%; display: flex; flex-direction: column; align-items: center; }
-        .game-container { display: flex; gap: 40px; padding: 20px; flex-wrap: wrap; justify-content: center; }
-        .grid { display: grid; grid-template-columns: repeat(10, 40px); grid-template-rows: repeat(10, 40px); gap: 2px; background: rgba(0, 242, 255, 0.1); border: 3px solid var(--neon-blue); }
-        .cell { width: 40px; height: 40px; background: rgba(2, 11, 26, 0.8); cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 20px; transition: 0.2s; position: relative; }
+        .grid { display: grid; grid-template-columns: repeat(10, 35px); gap: 2px; background: rgba(0, 242, 255, 0.1); border: 2px solid var(--neon-blue); }
+        .cell { width: 35px; height: 35px; background: rgba(2, 11, 26, 0.8); cursor: pointer; position: relative; transition: 0.2s; }
         .ship { background: var(--neon-blue) !important; box-shadow: inset 0 0 10px #000; }
-        .hit { background: rgba(255, 0, 85, 0.3) !important; }
-        .hit::after { content: "💥"; position: absolute; }
-        .miss::after { content: "•"; color: var(--neon-blue); font-size: 30px; }
+        .hit { background: rgba(255, 0, 85, 0.4) !important; }
+        .hit::after { content: "×"; color: var(--neon-red); position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); font-size: 24px; font-weight: bold; }
+        .miss::after { content: "•"; color: var(--neon-blue); position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); font-size: 20px; }
         .preview { background: rgba(0, 242, 255, 0.3) !important; }
-        .btn { padding: 12px; background: none; border: 2px solid var(--neon-blue); color: var(--neon-blue); font-family: 'Orbitron'; cursor: pointer; transition: 0.3s; width: 100%; margin: 5px 0; text-transform: uppercase; }
-        .btn:hover:not(:disabled) { background: var(--neon-blue); color: #000; box-shadow: 0 0 15px var(--neon-blue); }
+        .btn { padding: 12px; background: none; border: 1px solid var(--neon-blue); color: var(--neon-blue); cursor: pointer; width: 100%; margin: 5px 0; font-family: 'Orbitron'; text-transform: uppercase; }
+        .btn:hover:not(:disabled) { background: var(--neon-blue); color: #000; }
+        .btn:disabled { opacity: 0.2; cursor: not-allowed; }
         .btn.active { background: var(--neon-blue); color: #000; }
-        .btn:disabled { border-color: #444; color: #444; cursor: not-allowed; opacity: 0.5; }
-        input { background: #000; border: 1px solid var(--neon-blue); color: var(--neon-blue); padding: 12px; font-family: 'Orbitron'; width: 90%; margin-bottom: 10px; text-align: center; }
-        #status-text { height: 70px; font-size: 1.3rem; text-align: center; margin-top: 20px; color: #fff; text-shadow: 0 0 10px var(--neon-blue); }
-        .kill-msg { color: var(--neon-red); font-weight: bold; }
+        #status-text { height: 60px; font-size: 1.1rem; text-align: center; margin: 20px 0; color: #fff; text-shadow: 0 0 10px var(--neon-blue); }
+        input { background: #000; border: 1px solid var(--neon-blue); color: var(--neon-blue); padding: 10px; font-family: 'Orbitron'; width: 90%; margin-bottom: 10px; text-align: center; }
+        @media (min-width: 800px) { .grid { grid-template-columns: repeat(10, 40px); } .cell { width: 40px; height: 40px; } }
     </style>
 </head>
 <body>
     <div id="main-menu">
         <h1>SEA BATTLE <span style="color:var(--neon-red)">NEON</span></h1>
         <div class="menu-card">
-            <h3>МУЛЬТИПЛЕЕР</h3>
             <input type="text" id="room-id" placeholder="ID КОМНАТЫ">
             <input type="password" id="room-pass" placeholder="ПАРОЛЬ">
-            <button class="btn" onclick="startMultiplayer()">ВОЙТИ В СЕТЬ</button>
-        </div>
-        <div class="menu-card">
-            <h3>ОДИНОЧНАЯ ИГРА</h3>
-            <button class="btn" onclick="startAI()">ИГРАТЬ С ИИ</button>
+            <button class="btn" onclick="startMultiplayer()">ВХОД В СЕТЬ</button>
         </div>
     </div>
 
     <div id="game-screen" class="hidden">
-        <div id="status-text">ПОДГОТОВКА ФЛОТА</div>
-        <div class="ship-controls" id="factory">
+        <div id="status-text">РАССТАНОВКА ФЛОТА</div>
+        <div class="ship-controls" id="factory" style="display:flex; gap:10px; margin-bottom:20px;">
             <button class="btn active" id="btn-size-4" onclick="selectType(4)">4</button>
             <button class="btn" id="btn-size-3" onclick="selectType(3)">3</button>
             <button class="btn" id="btn-size-2" onclick="selectType(2)">2</button>
             <button class="btn" id="btn-size-1" onclick="selectType(1)">1</button>
-            <button class="btn" onclick="toggleRotate()">ПОВОРОТ (R)</button>
+            <button class="btn" onclick="toggleRotate()">R (ПОВОРОТ)</button>
         </div>
-        <div class="game-container">
+        <div style="display:flex; gap:30px; justify-content:center; flex-wrap:wrap;">
             <div>
-                <p style="text-align: center;">ВАШ ФЛОТ</p>
                 <div id="my-grid" class="grid"></div>
-                <button id="start-btn" class="btn" style="margin-top: 15px;" disabled onclick="readyToBattle()">В БОЙ!</button>
+                <button id="start-btn" class="btn" style="margin-top:15px;" disabled onclick="readyToBattle()">В БОЙ!</button>
             </div>
             <div id="enemy-box" class="hidden">
-                <p style="text-align: center;">РАДАР ВРАГА</p>
                 <div id="enemy-grid" class="grid"></div>
             </div>
         </div>
@@ -68,161 +60,134 @@
     <script src="/socket.io/socket.io.js"></script>
     <script>
         const socket = io();
-        const sounds = { shot: new Audio('shot.mp3'), hit: new Audio('hit.mp3'), miss: new Audio('miss.mp3') };
-        
-        let isAI = false, gameActive = false, canMove = false;
-        let myShipsMap = Array(100).fill(null), myShipsHealth = {};
-        let enemyShipsMap = Array(100).fill(null), enemyShipsHealth = {};
+        let gameActive = false, canMove = false;
+        let myShipsMap = Array(100).fill(null);
         let currentSize = 4, isVertical = false;
         let shipLimits = { 4:1, 3:2, 2:3, 1:4 }, currentPlaced = { 4:0, 3:0, 2:0, 1:0 };
-        let playerHits = 0, enemyHits = 0;
-        const WIN_SCORE = 20;
+        let shipsHealth = {};
 
         const myGrid = document.getElementById('my-grid'), enemyGrid = document.getElementById('enemy-grid'), status = document.getElementById('status-text');
 
         for (let i = 0; i < 100; i++) {
-            const mCell = document.createElement('div'); mCell.className = 'cell'; mCell.id = `my-${i}`;
+            const mCell = document.createElement('div');
+            mCell.className = 'cell'; mCell.id = `my-${i}`;
             mCell.onclick = () => placeShip(i);
             mCell.onmouseenter = () => drawPreview(i, true);
             mCell.onmouseleave = () => drawPreview(i, false);
             myGrid.appendChild(mCell);
-            const eCell = document.createElement('div'); eCell.className = 'cell'; eCell.id = `enemy-${i}`;
+
+            const eCell = document.createElement('div');
+            eCell.className = 'cell'; eCell.id = `enemy-${i}`;
             eCell.onclick = () => fire(i);
             enemyGrid.appendChild(eCell);
         }
 
-        function startMultiplayer() { isAI = false; enterGame(); socket.emit('joinCustomRoom', { room: document.getElementById('room-id').value, pass: document.getElementById('room-pass').value }); }
-        function startAI() { isAI = true; enterGame(); generateAIField(); }
-        function enterGame() { document.getElementById('main-menu').classList.add('hidden'); document.getElementById('game-screen').classList.remove('hidden'); }
-        function selectType(s) { if (currentPlaced[s] < shipLimits[s]) { currentSize = s; document.querySelectorAll('#factory .btn').forEach(b => b.classList.remove('active')); document.getElementById(`btn-size-${s}`).classList.add('active'); } }
+        function startMultiplayer() {
+            const room = document.getElementById('room-id').value, pass = document.getElementById('room-pass').value;
+            if(!room || !pass) return alert("Введите данные!");
+            document.getElementById('main-menu').classList.add('hidden');
+            document.getElementById('game-screen').classList.remove('hidden');
+            socket.emit('joinCustomRoom', { room, pass });
+        }
+
+        function selectType(s) {
+            currentSize = s;
+            document.querySelectorAll('#factory .btn').forEach(b => b.classList.remove('active'));
+            const activeBtn = document.getElementById(`btn-size-${s}`);
+            if(activeBtn) activeBtn.classList.add('active');
+        }
+
         function toggleRotate() { isVertical = !isVertical; }
 
-        function getIndices(idx, size, vert, check = false) {
+        function getIndices(idx, size, vert) {
             let res = [], r = Math.floor(idx/10), c = idx%10;
             for(let i=0; i<size; i++) {
-                let nr = vert?r+i:r, nc = vert?c:c+i;
-                if(nr>9 || nc>9) return null;
-                res.push(nr*10+nc);
+                let nr = vert ? r+i : r, nc = vert ? c : c+i;
+                if(nr > 9 || nc > 9) return null;
+                res.push(nr*10 + nc);
             }
-            if(check) {
-                for(let sIdx of res) {
-                    let nr = Math.floor(sIdx/10), nc = sIdx%10;
-                    for(let dr=-1; dr<=1; dr++) for(let dc=-1; dc<=1; dc++) {
-                        let nIdx = (nr+dr)*10+(nc+dc);
-                        if(nIdx>=0 && nIdx<100 && myShipsMap[nIdx] && !res.includes(nIdx)) return null;
+            for(let sIdx of res) {
+                let nr = Math.floor(sIdx/10), nc = sIdx%10;
+                for(let dr=-1; dr<=1; dr++) {
+                    for(let dc=-1; dc<=1; dc++) {
+                        let nIdx = (nr+dr)*10 + (nc+dc);
+                        if((nr+dr)>=0 && (nr+dr)<=9 && (nc+dc)>=0 && (nc+dc)<=9 && myShipsMap[nIdx]) return null;
                     }
                 }
             }
             return res;
         }
 
-        function drawPreview(idx, show) { if(!gameActive) { let c = getIndices(idx, currentSize, isVertical, true); if(c) c.forEach(i => document.getElementById(`my-${i}`).classList.toggle('preview', show)); } }
+        function drawPreview(idx, show) {
+            if(gameActive) return;
+            let coords = getIndices(idx, currentSize, isVertical);
+            if(coords) coords.forEach(i => document.getElementById(`my-${i}`).classList.toggle('preview', show));
+        }
 
         function placeShip(idx) {
-            let coords = getIndices(idx, currentSize, isVertical, true);
-            if(!coords || gameActive || currentPlaced[currentSize] >= shipLimits[currentSize]) return;
-            const sId = `s-${currentSize}-${Date.now()}`;
-            myShipsHealth[sId] = currentSize;
-            coords.forEach(i => { myShipsMap[i] = {id: sId, size: currentSize}; document.getElementById(`my-${i}`).classList.add('ship'); });
+            if(gameActive || currentPlaced[currentSize] >= shipLimits[currentSize]) return;
+            let coords = getIndices(idx, currentSize, isVertical);
+            if(!coords) return;
+
+            const shipId = 's' + idx;
+            shipsHealth[shipId] = currentSize;
+            coords.forEach(i => { myShipsMap[i] = shipId; document.getElementById(`my-${i}`).classList.add('ship'); });
             currentPlaced[currentSize]++;
-            sounds.shot.play();
-            updateShipButtons();
-            checkReady();
-        }
-
-        function updateShipButtons() {
-            [4,3,2,1].forEach(s => { 
-                const btn = document.getElementById(`btn-size-${s}`);
-                if(currentPlaced[s] >= shipLimits[s]) btn.disabled = true;
-            });
-            for(let s of [4,3,2,1]) if(currentPlaced[s] < shipLimits[s]) { selectType(s); break; }
-        }
-
-        function checkReady() {
-            let total = Object.values(currentPlaced).reduce((a,b)=>a+b, 0);
-            if(total === 10) document.getElementById('start-btn').disabled = false;
-            status.innerText = `КОРАБЛЕЙ: ${total}/10`;
+            
+            if(currentPlaced[currentSize] >= shipLimits[currentSize]) {
+                document.getElementById(`btn-size-${currentSize}`).disabled = true;
+                let next = [4,3,2,1].find(s => currentPlaced[s] < shipLimits[s]);
+                if(next) selectType(next);
+            }
+            if(Object.values(currentPlaced).reduce((a,b)=>a+b,0) === 10) document.getElementById('start-btn').disabled = false;
         }
 
         function readyToBattle() {
-            if(isAI) { gameActive = true; canMove = true; document.getElementById('enemy-box').classList.remove('hidden'); document.getElementById('factory').classList.add('hidden'); status.innerText = "ВАШ ХОД"; }
-            else { socket.emit('playerReady'); status.innerText = "ОЖИДАНИЕ ВРАГА..."; }
+            document.getElementById('factory').classList.add('hidden');
             document.getElementById('start-btn').classList.add('hidden');
+            socket.emit('playerReady');
         }
 
         function fire(idx) {
-            if(!gameActive || !canMove) return;
+            if (!gameActive || !canMove) return;
             const cell = document.getElementById(`enemy-${idx}`);
-            if(cell.classList.contains('hit') || cell.classList.contains('miss')) return;
-            if(isAI) handleAIShot(idx); else { canMove = false; socket.emit('makeMove', { index: idx }); }
+            if (cell.classList.contains('hit') || cell.classList.contains('miss')) return;
+            socket.emit('makeMove', { index: idx });
+            canMove = false;
         }
 
-        function handleAIShot(idx) {
-            const ship = enemyShipsMap[idx], cell = document.getElementById(`enemy-${idx}`);
-            if(ship) {
-                cell.classList.add('hit'); sounds.hit.play(); enemyShipsHealth[ship.id]--; playerHits++;
-                if(enemyShipsHealth[ship.id] === 0) status.innerHTML = `<span class="kill-msg">УБИТ ${ship.size}-ПАЛУБНЫЙ!</span>`;
-                else status.innerText = "ПОПАДАНИЕ!";
-                if(playerHits === WIN_SCORE) { status.innerText = "ПОБЕДА!"; gameActive = false; }
-            } else { cell.classList.add('miss'); sounds.miss.play(); canMove = false; status.innerText = "ХОД ИИ..."; setTimeout(aiMove, 800); }
-        }
-
-        function aiMove() {
-            if(!gameActive) return;
-            let idx = Math.floor(Math.random()*100);
-            if(document.getElementById(`my-${idx}`).classList.contains('hit') || document.getElementById(`my-${idx}`).classList.contains('miss')) return aiMove();
-            const ship = myShipsMap[idx], cell = document.getElementById(`my-${idx}`);
-            if(ship) {
-                cell.classList.add('hit'); sounds.hit.play(); myShipsHealth[ship.id]--; enemyHits++;
-                if(enemyHits === WIN_SCORE) { status.innerText = "ПОРАЖЕНИЕ!"; gameActive = false; }
-                else setTimeout(aiMove, 600);
-            } else { cell.classList.add('miss'); sounds.miss.play(); canMove = true; status.innerText = "ВАШ ХОД"; }
-        }
-
-        function generateAIField() {
-            [4,3,3,2,2,2,1,1,1,1].forEach((size, i) => {
-                let placed = false;
-                while(!placed) {
-                    let v = Math.random()>0.5, idx = Math.floor(Math.random()*100), r = Math.floor(idx/10), c = idx%10;
-                    let coords = [], ok = true;
-                    for(let j=0; j<size; j++) {
-                        let nr = v?r+j:r, nc = v?c:c+j;
-                        if(nr>9 || nc>9 || enemyShipsMap[nr*10+nc]) { ok = false; break; }
-                        coords.push(nr*10+nc);
-                    }
-                    if(ok) {
-                        let id = `ai-${i}-${size}`; enemyShipsHealth[id] = size;
-                        coords.forEach(cc => enemyShipsMap[cc] = {id, size});
-                        placed = true;
-                    }
-                }
-            });
-        }
-
-        // --- SOCKETS ---
-        socket.on('gameStart', (data) => { gameActive = true; canMove = data.canMove; document.getElementById('enemy-box').classList.remove('hidden'); document.getElementById('factory').classList.add('hidden'); status.innerText = canMove ? "ВАШ ХОД" : "ХОД ВРАГА"; });
-        
-        socket.on('enemyMove', (data) => {
-            const ship = myShipsMap[data.index], cell = document.getElementById(`my-${data.index}`);
-            let killedSize = 0;
-            if(ship) {
-                cell.classList.add('hit'); sounds.hit.play(); myShipsHealth[ship.id]--; enemyHits++;
-                if(myShipsHealth[ship.id] === 0) killedSize = ship.size;
-            } else { cell.classList.add('miss'); sounds.miss.play(); canMove = true; status.innerText = "ВАШ ХОД"; }
-            socket.emit('shotResult', { index: data.index, isHit: !!ship, killedSize: killedSize, isWin: enemyHits === WIN_SCORE });
-            if(enemyHits === WIN_SCORE) { status.innerText = "ВЫ ПРОИГРАЛИ"; gameActive = false; }
+        socket.on('waiting', msg => status.innerText = msg);
+        socket.on('gameStart', data => {
+            gameActive = true; canMove = data.canMove;
+            document.getElementById('enemy-box').classList.remove('hidden');
+            status.innerText = canMove ? "ВАШ ХОД!" : "ХОД ВРАГА...";
         });
 
-        socket.on('updateResult', (data) => {
+        socket.on('enemyMove', data => {
+            const shipId = myShipsMap[data.index];
+            if (shipId) {
+                document.getElementById(`my-${data.index}`).classList.add('hit');
+                shipsHealth[shipId]--;
+                if (Object.values(shipsHealth).every(h => h <= 0)) { alert("ПОРАЖЕНИЕ!"); location.reload(); }
+                socket.emit('shotResult', { index: data.index, hit: true });
+                canMove = false; status.innerText = "ВРАГ ПОПАЛ! ЕГО ХОД";
+            } else {
+                document.getElementById(`my-${data.index}`).classList.add('miss');
+                socket.emit('shotResult', { index: data.index, hit: false });
+                canMove = true; status.innerText = "ВРАГ ПРОМАЗАЛ. ВАШ ХОД!";
+            }
+        });
+
+        socket.on('updateResult', data => {
             const cell = document.getElementById(`enemy-${data.index}`);
-            cell.classList.add(data.isHit ? 'hit' : 'miss');
-            if(data.isHit) {
-                sounds.hit.play(); playerHits++; canMove = true;
-                if(data.killedSize) status.innerHTML = `<span class="kill-msg">УБИТ ${data.killedSize}-ПАЛУБНЫЙ!</span>`;
-                else status.innerText = "ПОПАДАНИЕ!";
-            } else { sounds.miss.play(); status.innerText = "ХОД ВРАГА"; }
-            if(playerHits === WIN_SCORE || data.isWin) { status.innerText = "ПОБЕДА!"; gameActive = false; }
+            cell.classList.add(data.hit ? 'hit' : 'miss');
+            canMove = data.hit;
+            status.innerText = data.hit ? "ЕСТЬ ПОПАДАНИЕ! ВАШ ХОД" : "МИМО! ХОД ВРАГА";
         });
+
+        socket.on('errorMsg', msg => alert(msg));
+        socket.on('enemyDisconnected', () => { alert("Враг бежал с поля боя!"); location.reload(); });
+        window.onkeydown = (e) => { if(e.key.toLowerCase() === 'r') toggleRotate(); };
     </script>
 </body>
 </html>

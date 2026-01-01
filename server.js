@@ -8,10 +8,8 @@ app.use(express.static(__dirname));
 const rooms = new Map();
 
 io.on('connection', (socket) => {
-    console.log(`User connected: ${socket.id}`);
-
     socket.on('joinCustomRoom', (data) => {
-        if (!data || !data.room || !data.pass) return socket.emit('errorMsg', 'Ошибка данных');
+        if (!data || !data.room || !data.pass) return;
         const { room, pass } = data;
 
         if (!rooms.has(room)) {
@@ -61,13 +59,10 @@ io.on('connection', (socket) => {
         if (roomName && rooms.has(roomName)) {
             const currentRoom = rooms.get(roomName);
             currentRoom.players = currentRoom.players.filter(id => id !== socket.id);
-            if (currentRoom.players.length === 0) {
-                rooms.delete(roomName);
-            } else {
-                io.to(roomName).emit('enemyDisconnected');
-            }
+            if (currentRoom.players.length === 0) rooms.delete(roomName);
+            else io.to(roomName).emit('enemyDisconnected');
         }
     });
 });
 
-http.listen(3000, () => console.log('SERVER 2026 ONLINE: http://localhost:3000'));
+http.listen(3000, () => console.log('SERVER 2026 STARTED ON PORT 3000'));

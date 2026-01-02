@@ -1,449 +1,432 @@
 const express = require('express');
 const app = express();
 const http = require('http').createServer(app);
-const io = require('socket.io')(http, {
-  cors: {
-    origin: "*", // Разрешаем все origins для Render
-    methods: ["GET", "POST"]
-  }
-});
+const io = require('socket.io')(http);
 
-// Раздаем статические файлы
 app.use(express.static(__dirname));
-app.use(express.json());
 
-// Хранилище комнат
 const rooms = new Map();
 
 io.on('connection', (socket) => {
-  console.log(`🔥 Новый игрок подключился: ${socket.id}`);
-  
-  // Присоединение к комнате
-  socket.on('joinCustomRoom', (data) => {
-    console.log(`🎮 ${socket.id} пытается зайти в комнату:`, data?.room);
+    console.log(`Пользователь подключился: ${socket.id}`);
     
-    if (!data || !data.room || !data.pass) {
-      socket.emit('errorMsg', 'Введите ID комнаты и пароль');
-      return;
-    }
-    
-    const { room, pass } = data;
-    const roomKey = room.trim().toLowerCase();
-
-    if (!rooms.has(roomKey)) {
-      // Создаем новую комнату
-      rooms.set(roomKey, {
-        password: pass,
-        players: [socket.id],
-        ready: [],
-        airstrikes: new Map([[socket.id, true]]),
-        gameState: {
-          started: false,
-          turn: null,
-          player1: socket.id,
-          player2: null
+    socket.on('joinCustomRoom', (data) => {
+        console.log(`Попытка присоединения к комнате: ${data?.room}`);
+        
+        if (!data || !data.room || !data.pass) {
+            socket.emit('errorMsg', 'Неверные данные для подключения');
+            return;
         }
-      });
-      
-      socket.join(roomKey);
-      socket.roomName = roomKey;
-      socket.playerId = socket.id;
-      
-      console.log(`✅ Комната "${roomKey}" создана`);
-      socket.emit('waiting', 'Комната создана! Ждем второго игрока...');
-      
-    } else {
-      // Присоединяемся к существующей комнате
-      const currentRoom = rooms.get(roomKey);
-      
-      if (currentRoom.password !== pass) {
-        socket.emit('errorMsg', '❌ Неверный пароль!');
-        return;
-      }
-      
-      if (currentRoom.players.length >= 2) {
-        socket.emit('errorMsg', '❌ Комната уже заполнена!');
-        return;
-      }
+        
+        const { room, pass } = data;
 
-      // Добавляем второго игрока
-      currentRoom.players.push(socket.id);
-      currentRoom.airstrikes.set(socket.id, true);
-      currentRoom.gameState.player2 = socket.id;
-      
-      socket.join(roomKey);
-      socket.roomName = roomKey;
-      socket.playerId = socket.id;
-      
-      console.log(`✅ Игрок ${socket.id} присоединился к комнате "${roomKey}"`);
-      
-      // Уведомляем обоих игроков
-      io.to(roomKey).emit('waiting', '✅ Оба игрока в комнате! Расставляйте корабли.');
-      io.to(roomKey).emit('playersCount', { count: 2 });
-    }
-  });
+        if (!rooms.has(room)) {
+            // Создание новой комнаты
+            rooms.set(room, { 
+                password: pass, 
+                players: [socket.id],
+                airstrikes: new Map(),
+                gameState: {
+                    started: false,
+                    turn: null,
+                    playerShips: new Map(),
+                    playerMoves: new Map()
+                }
+            });
+            
+            socket.join(room);
+            socket.roomName = room;
+            socket.playerId = socket.id;
+            
+            console.log(`Комната ${room} создана пользователем ${socket.id}`);
+            socket.emit('waiting', 'Комната создана. Ждем друга...');
+        } else {
+            // Присоединение к существующей комнате
+            const currentRoom = rooms.get(room);
+            
+            if (currentRoom.password !== pass) {
+                socket.emit('errorMsg', 'Неверный пароль!');
+                return;
+            }
+            
+            if (currentRoom.players.length >= 2) {
+                socket.emit('errorMsg', 'Комната полна!');
+                return;
+            }
 
-  // Игрок готов
-  socket.on('playerReady', () => {
-    const roomName = socket.roomName;
-    if (!roomName || !rooms.has(roomName)) {
-      socket.emit('errorMsg', 'Комната не найдена');
-      return;
-    }
-
-    const currentRoom = rooms.get(roomName);
-    
-    // Добавляем игрока в список готовых
-    if (!currentRoom.ready.includes(socket.id)) {
-      currentRoom.ready.push(socket.id);
-    }
-
-    console.log(`🎯 Игрок ${socket.id} готов в комнате "${roomName}"`);
-
-    // Если оба игрока готовы, начинаем игру
-    if (currentRoom.players.length === 2 && 
-        currentRoom.ready.length === 2 &&
-        !currentRoom.gameState.started) {
-      
-      // Выбираем случайного игрока для первого хода
-      const firstPlayerIndex = Math.random() < 0.5 ? 0 : 1;
-      const firstPlayerId = currentRoom.players[firstPlayerIndex];
-      const secondPlayerId = currentRoom.players[1 - firstPlayerIndex];
-      
-      currentRoom.gameState.turn = firstPlayerId;
-      currentRoom.gameState.started = true;
-      
-      console.log(`🚀 Игра началась в комнате "${roomName}"`);
-      console.log(`➡️ Первый ход у: ${firstPlayerId}`);
-      
-      // Отправляем игрокам информацию о начале игры
-      io.to(firstPlayerId).emit('gameStart', { 
-        canMove: true,
-        airstrikeAvailable: true,
-        message: '🎯 ВАШ ХОД! Авиаудар доступен (кнопка A)'
-      });
-      
-      io.to(secondPlayerId).emit('gameStart', { 
-        canMove: false,
-        airstrikeAvailable: true,
-        message: '⏳ ХОД ПРОТИВНИКА...'
-      });
-      
-      // Уведомляем о начале игры
-      io.to(roomName).emit('gameStatus', '⚔️ БИТВА НАЧАЛАСЬ!');
-    } else {
-      // Уведомляем о готовности
-      const waitingCount = currentRoom.players.length - currentRoom.ready.length;
-      io.to(roomName).emit('waiting', 
-        `Ожидание готовности... (${currentRoom.ready.length}/2 игроков готово)`);
-    }
-  });
-
-  // Обычный ход
-  socket.on('makeMove', (data) => {
-    const roomName = socket.roomName;
-    if (!roomName || !rooms.has(roomName)) return;
-    
-    const currentRoom = rooms.get(roomName);
-    
-    // Проверяем, ход ли игрока
-    if (currentRoom.gameState.turn !== socket.id) {
-      socket.emit('errorMsg', 'Сейчас не ваш ход!');
-      return;
-    }
-    
-    // Проверяем индекс
-    const index = parseInt(data.index);
-    if (isNaN(index) || index < 0 || index > 99) {
-      socket.emit('errorMsg', 'Некорректная клетка!');
-      return;
-    }
-    
-    console.log(`🎯 Игрок ${socket.id} стреляет в клетку ${index}`);
-    
-    // Передаем ход противнику
-    const opponentId = currentRoom.players.find(id => id !== socket.id);
-    socket.to(roomName).emit('enemyMove', {
-      index: index,
-      playerId: socket.id
+            currentRoom.players.push(socket.id);
+            socket.join(room);
+            socket.roomName = room;
+            socket.playerId = socket.id;
+            
+            console.log(`Пользователь ${socket.id} присоединился к комнате ${room}`);
+            io.to(room).emit('waiting', 'Противник вошел! Расставляйте флот.');
+        }
     });
-  });
 
-  // Результат выстрела
-  socket.on('shotResult', (data) => {
-    const roomName = socket.roomName;
-    if (!roomName || !rooms.has(roomName)) return;
-    
-    const currentRoom = rooms.get(roomName);
-    const opponentId = currentRoom.players.find(id => id !== socket.id);
-    
-    // Если попали, но не убили - ход остается у стрелявшего
-    if (data.hit && !data.killed) {
-      currentRoom.gameState.turn = opponentId;
-      
-      io.to(opponentId).emit('updateResult', {
-        index: data.index,
-        hit: true,
-        killed: false,
-        canMove: true,
-        message: '🎯 ПОПАДАНИЕ! Ваш ход продолжается'
-      });
-      
-      socket.emit('updateResult', {
-        index: data.index,
-        hit: true,
-        killed: false,
-        canMove: false,
-        message: '💥 Ваш корабль поврежден!'
-      });
-      
-    } else if (data.hit && data.killed) {
-      // Убил корабль - ход тоже остается
-      currentRoom.gameState.turn = opponentId;
-      
-      io.to(opponentId).emit('updateResult', {
-        index: data.index,
-        hit: true,
-        killed: true,
-        coords: data.coords,
-        canMove: true,
-        message: '💀 КОРАБЛЬ УБИТ! Продолжайте ход'
-      });
-      
-      socket.emit('updateResult', {
-        index: data.index,
-        hit: true,
-        killed: true,
-        coords: data.coords,
-        canMove: false,
-        message: '💔 Ваш корабль уничтожен!'
-      });
-      
-    } else {
-      // Промах - ход переходит
-      currentRoom.gameState.turn = socket.id;
-      
-      io.to(opponentId).emit('updateResult', {
-        index: data.index,
-        hit: false,
-        killed: false,
-        canMove: false,
-        message: '🌀 ПРОМАХ! Ход противника'
-      });
-      
-      socket.emit('updateResult', {
-        index: data.index,
-        hit: false,
-        killed: false,
-        canMove: true,
-        message: '🎯 ПРОМАХ! Ваш ход'
-      });
-    }
-    
-    // Обновляем статус для всех
-    io.to(roomName).emit('gameStatus', 
-      `Ход: ${currentRoom.gameState.turn === socket.id ? 'Вы' : 'Противник'}`);
-  });
+    socket.on('playerReady', () => {
+        const roomName = socket.roomName;
+        if (!roomName || !rooms.has(roomName)) {
+            socket.emit('errorMsg', 'Комната не найдена');
+            return;
+        }
 
-  // Авиаудар
-  socket.on('airstrike', (data) => {
-    const roomName = socket.roomName;
-    if (!roomName || !rooms.has(roomName)) return;
-    
-    const currentRoom = rooms.get(roomName);
-    
-    // Проверяем, ход ли игрока
-    if (currentRoom.gameState.turn !== socket.id) {
-      socket.emit('errorMsg', 'Сейчас не ваш ход!');
-      return;
-    }
-    
-    // Проверяем доступность авиаудара
-    if (!currentRoom.airstrikes.get(socket.id)) {
-      socket.emit('errorMsg', '❌ Авиаудар уже использован!');
-      return;
-    }
-    
-    // Проверяем цели
-    if (!data.targets || !Array.isArray(data.targets)) {
-      socket.emit('errorMsg', 'Некорректные цели для авиаудара');
-      return;
-    }
-    
-    // Используем авиаудар
-    currentRoom.airstrikes.set(socket.id, false);
-    
-    const opponentId = currentRoom.players.find(id => id !== socket.id);
-    console.log(`✈️ Авиаудар от ${socket.id} по центру ${data.center}, целей: ${data.targets.length}`);
-    
-    // Отправляем цели противнику
-    socket.to(roomName).emit('enemyAirstrike', {
-      center: data.center,
-      targets: data.targets,
-      playerId: socket.id
+        socket.isReady = true;
+        const currentRoom = rooms.get(roomName);
+        
+        // Получаем объекты сокетов для всех игроков комнаты
+        const players = currentRoom.players
+            .map(id => io.sockets.sockets.get(id))
+            .filter(s => s && s.isReady);
+
+        console.log(`Готовность в комнате ${roomName}: ${players.length}/2 игроков готовы`);
+
+        if (players.length === 2) {
+            // Инициализируем авиаудары для игроков
+            currentRoom.airstrikes.set(players[0].id, true); // true - доступен
+            currentRoom.airstrikes.set(players[1].id, true);
+            
+            // Определяем, кто ходит первым
+            const first = Math.random() < 0.5 ? 0 : 1;
+            currentRoom.gameState.turn = players[first].id;
+            currentRoom.gameState.started = true;
+            
+            console.log(`Игра началась в комнате ${roomName}. Первый ход у: ${players[first].id}`);
+            
+            // Отправляем игрокам информацию о начале игры
+            players[first].emit('gameStart', { 
+                canMove: true,
+                airstrikeAvailable: true 
+            });
+            
+            players[1 - first].emit('gameStart', { 
+                canMove: false,
+                airstrikeAvailable: true 
+            });
+            
+            io.to(roomName).emit('statusUpdate', 'Игра началась!');
+        } else {
+            const waitingPlayers = currentRoom.players
+                .map(id => io.sockets.sockets.get(id))
+                .filter(s => s);
+                
+            waitingPlayers.forEach(player => {
+                if (player.id !== socket.id) {
+                    player.emit('waiting', 'Противник готов! Ожидайте...');
+                }
+            });
+            
+            socket.emit('waiting', 'Ждем готовности врага...');
+        }
     });
-    
-    // Подтверждаем использование
-    socket.emit('airstrikeConfirmed');
-    socket.emit('gameStatus', '✈️ Авиаудар запущен! Ожидаем результат...');
-  });
 
-  // Результат авиаудара
-  socket.on('airstrikeResult', (data) => {
-    const roomName = socket.roomName;
-    if (!roomName || !rooms.has(roomName)) return;
-    
-    const currentRoom = rooms.get(roomName);
-    const opponentId = currentRoom.players.find(id => id !== socket.id);
-    
-    // Проверяем, были ли попадания
-    const hits = data.results.filter(r => r.hit);
-    
-    console.log(`📊 Результат авиаудара: ${hits.length} попаданий из ${data.results.length}`);
-    
-    // Если есть попадания - ход остается у наносившего удар
-    if (hits.length > 0) {
-      currentRoom.gameState.turn = opponentId;
-      
-      io.to(opponentId).emit('airstrikeResults', {
-        results: data.results,
-        canContinue: true,
-        message: `✈️ Авиаудар нанес урон! (${hits.length} попаданий)`
-      });
-      
-      socket.emit('gameStatus', `✈️ Авиаудар успешен! ${hits.length} попаданий`);
-    } else {
-      // Нет попаданий - ход переходит
-      currentRoom.gameState.turn = socket.id;
-      
-      io.to(opponentId).emit('airstrikeResults', {
-        results: data.results,
-        canContinue: false,
-        message: '🌀 Авиаудар промахнулся!'
-      });
-      
-      socket.emit('gameStatus', '🌀 Авиаудар промахнулся! Ваш ход');
-    }
-  });
-
-  // Игрок победил
-  socket.on('gameWon', () => {
-    const roomName = socket.roomName;
-    if (!roomName || !rooms.has(roomName)) return;
-    
-    const currentRoom = rooms.get(roomName);
-    const opponentId = currentRoom.players.find(id => id !== socket.id);
-    
-    console.log(`🏆 Игрок ${socket.id} победил в комнате "${roomName}"`);
-    
-    // Уведомляем о победе/поражении
-    io.to(socket.id).emit('gameOver', { 
-      won: true,
-      message: '🎉 ПОБЕДА! Все корабли противника уничтожены!' 
+    socket.on('makeMove', (data) => {
+        const roomName = socket.roomName;
+        if (!roomName || !rooms.has(roomName)) return;
+        
+        const currentRoom = rooms.get(roomName);
+        
+        // Проверяем, чей сейчас ход
+        if (currentRoom.gameState.turn !== socket.id) {
+            socket.emit('errorMsg', 'Сейчас не ваш ход!');
+            return;
+        }
+        
+        // Записываем ход
+        if (!currentRoom.gameState.playerMoves.has(socket.id)) {
+            currentRoom.gameState.playerMoves.set(socket.id, new Set());
+        }
+        
+        const playerMoves = currentRoom.gameState.playerMoves.get(socket.id);
+        
+        // Проверяем, не стреляли ли уже в эту клетку
+        if (playerMoves.has(data.index)) {
+            socket.emit('errorMsg', 'Вы уже стреляли в эту клетку!');
+            return;
+        }
+        
+        playerMoves.add(data.index);
+        
+        console.log(`Ход от ${socket.id} в комнате ${roomName}: клетка ${data.index}`);
+        
+        // Передаем ход противнику
+        socket.to(roomName).emit('enemyMove', {
+            index: data.index,
+            playerId: socket.id
+        });
     });
-    
-    io.to(opponentId).emit('gameOver', { 
-      won: false,
-      message: '💀 ПОРАЖЕНИЕ! Все ваши корабли потоплены.' 
-    });
-    
-    // Удаляем комнату через 30 секунд
-    setTimeout(() => {
-      if (rooms.has(roomName)) {
-        rooms.delete(roomName);
-        console.log(`🗑️ Комната "${roomName}" удалена после игры`);
-      }
-    }, 30000);
-  });
 
-  // Отключение игрока
-  socket.on('disconnect', (reason) => {
-    console.log(`👋 Игрок отключился: ${socket.id}, причина: ${reason}`);
-    
-    const roomName = socket.roomName;
-    if (roomName && rooms.has(roomName)) {
-      const currentRoom = rooms.get(roomName);
-      
-      // Удаляем игрока из комнаты
-      currentRoom.players = currentRoom.players.filter(id => id !== socket.id);
-      currentRoom.ready = currentRoom.ready.filter(id => id !== socket.id);
-      
-      if (currentRoom.players.length === 0) {
-        // Комната пуста - удаляем
-        rooms.delete(roomName);
-        console.log(`🗑️ Комната "${roomName}" удалена (пуста)`);
-      } else {
-        // Уведомляем оставшегося игрока
-        const remainingPlayer = currentRoom.players[0];
-        io.to(remainingPlayer).emit('enemyDisconnected');
-        io.to(remainingPlayer).emit('gameOver', { 
-          won: true,
-          message: '🏆 ПРОТИВНИК СДАЛСЯ! Вы победили!' 
+    socket.on('shotResult', (data) => {
+        const roomName = socket.roomName;
+        if (!roomName || !rooms.has(roomName)) return;
+        
+        const currentRoom = rooms.get(roomName);
+        
+        // Определяем, кто сейчас ходит (противник)
+        const opponentId = currentRoom.players.find(id => id !== socket.id);
+        const opponentSocket = io.sockets.sockets.get(opponentId);
+        
+        if (!opponentSocket) return;
+        
+        // Меняем ход в зависимости от результата
+        if (data.hit && !data.killed) {
+            // При попадании ход остается у того же игрока
+            currentRoom.gameState.turn = opponentId;
+            opponentSocket.emit('updateResult', {
+                index: data.index,
+                hit: true,
+                killed: false,
+                canMove: true
+            });
+            
+            // Уведомляем стреляющего о результате
+            socket.emit('updateResult', {
+                index: data.index,
+                hit: true,
+                killed: false,
+                canMove: false
+            });
+        } else if (data.hit && data.killed) {
+            // При убийстве корабля ход тоже остается у того же игрока
+            currentRoom.gameState.turn = opponentId;
+            opponentSocket.emit('updateResult', {
+                index: data.index,
+                hit: true,
+                killed: true,
+                coords: data.coords,
+                canMove: true
+            });
+            
+            socket.emit('updateResult', {
+                index: data.index,
+                hit: true,
+                killed: true,
+                coords: data.coords,
+                canMove: false
+            });
+        } else {
+            // При промахе ход переходит другому игроку
+            currentRoom.gameState.turn = socket.id;
+            opponentSocket.emit('updateResult', {
+                index: data.index,
+                hit: false,
+                killed: false,
+                canMove: false
+            });
+            
+            socket.emit('updateResult', {
+                index: data.index,
+                hit: false,
+                killed: false,
+                canMove: true
+            });
+        }
+        
+        // Отправляем обновление статуса
+        io.to(roomName).emit('statusUpdate', `Ход игрока ${currentRoom.gameState.turn === socket.id ? socket.id : opponentId}`);
+    });
+
+    // Обработка авиаудара
+    socket.on('airstrike', (data) => {
+        const roomName = socket.roomName;
+        if (!roomName || !rooms.has(roomName)) return;
+        
+        const currentRoom = rooms.get(roomName);
+        
+        // Проверяем, чей сейчас ход
+        if (currentRoom.gameState.turn !== socket.id) {
+            socket.emit('errorMsg', 'Сейчас не ваш ход!');
+            return;
+        }
+        
+        // Проверяем, доступен ли авиаудар
+        if (!currentRoom.airstrikes.get(socket.id)) {
+            socket.emit('errorMsg', 'Авиаудар уже использован!');
+            return;
+        }
+        
+        // Проверяем, что цели находятся в пределах доски
+        if (!data.targets || !Array.isArray(data.targets) || data.targets.length === 0) {
+            socket.emit('errorMsg', 'Некорректные цели для авиаудара');
+            return;
+        }
+        
+        // Помечаем авиаудар как использованный
+        currentRoom.airstrikes.set(socket.id, false);
+        
+        // Получаем сокет противника
+        const opponentId = currentRoom.players.find(id => id !== socket.id);
+        const opponentSocket = io.sockets.sockets.get(opponentId);
+        
+        if (!opponentSocket) {
+            socket.emit('errorMsg', 'Противник не найден');
+            return;
+        }
+        
+        console.log(`Авиаудар от ${socket.id} в комнате ${roomName}. Центр: ${data.center}, целей: ${data.targets.length}`);
+        
+        // Отправляем цели противнику
+        opponentSocket.emit('enemyAirstrike', {
+            center: data.center,
+            targets: data.targets,
+            playerId: socket.id
         });
         
-        console.log(`ℹ️ Игрок ${socket.id} покинул комнату "${roomName}"`);
+        // Подтверждаем использование авиаудара
+        socket.emit('airstrikeConfirmed', { 
+            used: true,
+            targets: data.targets 
+        });
         
-        // Удаляем комнату через 30 секунд
+        // Временно блокируем ходы до получения результатов авиаудара
+        currentRoom.gameState.airstrikeInProgress = true;
+        currentRoom.gameState.airstrikePlayer = socket.id;
+    });
+
+    // Результаты авиаудара от противника
+    socket.on('airstrikeResult', (data) => {
+        const roomName = socket.roomName;
+        if (!roomName || !rooms.has(roomName)) return;
+        
+        const currentRoom = rooms.get(roomName);
+        const opponentId = currentRoom.players.find(id => id !== socket.id);
+        const opponentSocket = io.sockets.sockets.get(opponentId);
+        
+        if (!opponentSocket) return;
+        
+        // Определяем, были ли попадания
+        const hasHits = data.results.some(result => result.hit);
+        
+        // Если были попадания, то ход остается у игрока, который наносил авиаудар
+        if (hasHits) {
+            currentRoom.gameState.turn = opponentId;
+            opponentSocket.emit('airstrikeResults', {
+                results: data.results,
+                canContinue: true
+            });
+            
+            // Уведомляем о том, что ход продолжается
+            io.to(roomName).emit('statusUpdate', 'Авиаудар нанес урон! Ход продолжается.');
+        } else {
+            // Если попаданий не было, ход переходит другому игроку
+            currentRoom.gameState.turn = socket.id;
+            opponentSocket.emit('airstrikeResults', {
+                results: data.results,
+                canContinue: false
+            });
+            
+            // Уведомляем о промахе
+            io.to(roomName).emit('statusUpdate', 'Авиаудар промахнулся! Ход переходит.');
+        }
+        
+        // Снимаем блокировку ходов
+        currentRoom.gameState.airstrikeInProgress = false;
+        currentRoom.gameState.airstrikePlayer = null;
+        
+        console.log(`Результаты авиаудара в комнате ${roomName}: ${hasHits ? 'были попадания' : 'промах'}`);
+    });
+
+    // Обработка победы
+    socket.on('gameWon', () => {
+        const roomName = socket.roomName;
+        if (!roomName || !rooms.has(roomName)) return;
+        
+        const currentRoom = rooms.get(roomName);
+        const opponentId = currentRoom.players.find(id => id !== socket.id);
+        const opponentSocket = io.sockets.sockets.get(opponentId);
+        
+        if (opponentSocket) {
+            opponentSocket.emit('gameLost', 'Все ваши корабли уничтожены!');
+        }
+        
+        io.to(roomName).emit('gameOver', { winner: socket.id });
+        
+        // Очищаем комнату через некоторое время
         setTimeout(() => {
-          if (rooms.has(roomName)) {
-            rooms.delete(roomName);
-          }
-        }, 30000);
-      }
-    }
-  });
+            if (rooms.has(roomName)) {
+                rooms.delete(roomName);
+                console.log(`Комната ${roomName} удалена после завершения игры`);
+            }
+        }, 10000);
+    });
+
+    socket.on('disconnect', () => {
+        console.log(`Пользователь отключился: ${socket.id}`);
+        
+        const roomName = socket.roomName;
+        if (roomName && rooms.has(roomName)) {
+            const currentRoom = rooms.get(roomName);
+            
+            // Удаляем игрока из комнаты
+            currentRoom.players = currentRoom.players.filter(id => id !== socket.id);
+            
+            if (currentRoom.players.length === 0) {
+                // Если комната пуста, удаляем ее
+                rooms.delete(roomName);
+                console.log(`Комната ${roomName} удалена (пуста)`);
+            } else {
+                // Уведомляем оставшегося игрока
+                const remainingPlayer = currentRoom.players[0];
+                const remainingSocket = io.sockets.sockets.get(remainingPlayer);
+                
+                if (remainingSocket) {
+                    remainingSocket.emit('enemyDisconnected');
+                }
+                
+                // Если игра началась, завершаем ее
+                if (currentRoom.gameState.started) {
+                    io.to(roomName).emit('gameOver', { 
+                        winner: remainingPlayer,
+                        reason: 'Противник отключился'
+                    });
+                }
+                
+                console.log(`Игрок ${socket.id} покинул комнату ${roomName}`);
+            }
+        }
+    });
+
+    // Обработка ошибок
+    socket.on('error', (error) => {
+        console.error(`Ошибка у пользователя ${socket.id}:`, error);
+    });
 });
 
-// Маршруты для Render
-app.get('/', (req, res) => {
-  res.sendFile(__dirname + '/index.html');
-});
-
+// Маршрут для проверки состояния сервера
 app.get('/status', (req, res) => {
-  const activeRooms = Array.from(rooms.entries()).map(([name, room]) => ({
-    name,
-    players: room.players.length,
-    started: room.gameState.started
-  }));
-  
-  res.json({
-    status: 'online',
-    server: 'Sea Battle Neon',
-    version: '2.0.0',
-    uptime: process.uptime(),
-    players: io.engine.clientsCount,
-    rooms: rooms.size,
-    activeRooms: activeRooms
-  });
+    res.json({
+        status: 'online',
+        rooms: rooms.size,
+        uptime: process.uptime()
+    });
 });
 
+// Маршрут для получения списка комнат (для отладки)
 app.get('/rooms', (req, res) => {
-  const roomsList = {};
-  for (const [name, room] of rooms.entries()) {
-    roomsList[name] = {
-      players: room.players,
-      ready: room.ready,
-      started: room.gameState.started,
-      hasPassword: !!room.password
-    };
-  }
-  res.json(roomsList);
+    const roomsInfo = {};
+    
+    for (const [roomName, room] of rooms.entries()) {
+        roomsInfo[roomName] = {
+            players: room.players.length,
+            gameStarted: room.gameState.started
+        };
+    }
+    
+    res.json(roomsInfo);
 });
 
-// Для Render важно слушать правильный порт
 const PORT = process.env.PORT || 3000;
-http.listen(PORT, '0.0.0.0', () => {
-  console.log(`
-  ╔═══════════════════════════════════════╗
-  ║      МОРСКОЙ БОЙ С АВИАУДАРОМ        ║
-  ║           v2.0.0 - NEON              ║
-  ╚═══════════════════════════════════════╝
-  
-  🚀 Сервер запущен на порту: ${PORT}
-  🌐 WebSocket сервер готов
-  📡 Ожидаем подключений...
-  
-  ✅ Статус: http://localhost:${PORT}/status
-  🎮 Игра: http://localhost:${PORT}/
-  `);
+http.listen(PORT, () => {
+    console.log(`🚀 Сервер запущен на порту ${PORT}`);
+    console.log(`📡 WebSocket сервер готов к подключениям`);
+    console.log(`🌐 Откройте в браузере: http://localhost:${PORT}`);
+});
+
+// Обработка завершения работы сервера
+process.on('SIGINT', () => {
+    console.log('\n🛑 Остановка сервера...');
+    http.close(() => {
+        console.log('✅ Сервер успешно остановлен');
+        process.exit(0);
+    });
 });

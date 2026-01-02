@@ -43,9 +43,11 @@ io.on('connection', (socket) => {
                     id: socket.id,
                     name: data.playerName || `Игрок_${socket.id.slice(0, 4)}`,
                     ready: false,
+                    shipsReady: false,
                     isHost: true
                 }],
                 gameStarted: false,
+                currentTurn: null,
                 createdAt: Date.now()
             };
             
@@ -56,7 +58,8 @@ io.on('connection', (socket) => {
                 id: socket.id,
                 name: data.playerName || `Игрок_${socket.id.slice(0, 4)}`,
                 lobbyId: lobbyId,
-                ready: false
+                ready: false,
+                shipsReady: false
             });
             
             socket.join(lobbyId);
@@ -121,6 +124,7 @@ io.on('connection', (socket) => {
             id: socket.id,
             name: playerName,
             ready: false,
+            shipsReady: false,
             isHost: false
         });
         
@@ -129,7 +133,8 @@ io.on('connection', (socket) => {
             id: socket.id,
             name: playerName,
             lobbyId: data.lobbyId,
-            ready: false
+            ready: false,
+            shipsReady: false
         });
         
         socket.join(data.lobbyId);
@@ -139,7 +144,8 @@ io.on('connection', (socket) => {
         // Уведомляем всех в лобби о новом игроке
         io.to(data.lobbyId).emit('playerJoined', {
             id: socket.id,
-            name: playerName
+            name: playerName,
+            players: lobby.players
         });
         
         // Отправляем обновленное лобби присоединившемуся игроку
@@ -149,7 +155,7 @@ io.on('connection', (socket) => {
         broadcastLobbyList();
     });
     
-    // Установка статуса готовности
+    // Установка статуса готовности в лобби
     socket.on('setReady', (isReady) => {
         const player = players.get(socket.id);
         if (!player || !player.lobbyId) return;
@@ -164,7 +170,7 @@ io.on('connection', (socket) => {
             player.ready = isReady;
         }
         
-        console.log(`✅ Игрок ${player.name} ${isReady ? 'готов' : 'не готов'}`);
+        console.log(`✅ Игрок ${player.name} ${isReady ? 'готов' : 'не готов'} в лобби`);
         
         // Уведомляем всех в лобби
         io.to(lobby.id).emit('playerReady', {
@@ -173,44 +179,67 @@ io.on('connection', (socket) => {
             ready: isReady
         });
         
-        // Проверяем, все ли игроки готовы
-        if (lobby.players.length === lobby.maxPlayers) {
+        // Если оба игрока в лобби готовы и их ровно 2
+        if (lobby.players.length === 2) {
             const allReady = lobby.players.every(p => p.ready);
-            if (allReady) {
-                console.log(`🚀 Все игроки готовы в лобби ${lobby.id}`);
+            if (allReady && !lobby.gameStarted) {
+                console.log(`🚀 Оба игрока готовы в лобби ${lobby.id}`);
                 
-                // Определяем, кто ходит первым
-                const firstPlayerIndex = Math.floor(Math.random() * lobby.players.length);
-                const firstPlayerId = lobby.players[firstPlayerIndex].id;
-                
+                // Начинаем игру
                 lobby.gameStarted = true;
+                
+                // Определяем, кто ходит первым (случайно)
+                const firstPlayerIndex = Math.floor(Math.random() * 2);
+                lobby.currentTurn = lobby.players[firstPlayerIndex].id;
                 
                 // Отправляем игрокам информацию о начале игры
                 lobby.players.forEach((player, index) => {
                     const playerSocket = io.sockets.sockets.get(player.id);
                     if (playerSocket) {
                         playerSocket.emit('gameStart', {
-                            canMove: player.id === firstPlayerId,
+                            canMove: player.id === lobby.currentTurn,
                             playerNumber: index + 1,
                             opponentName: lobby.players.find(p => p.id !== player.id)?.name || 'Противник'
                         });
                     }
                 });
                 
-                console.log(`🎮 Игра началась в лобби ${lobby.id}`);
+                console.log(`🎮 Игра началась в лобби ${lobby.id}, первый ход у ${lobby.currentTurn}`);
             }
         }
     });
     
-    // Игрок готов (расставил корабли и нажал "Начать битву")
-    socket.on('playerReady', () => {
-        // Эта функция уже есть выше, но под другим названием
-        // Мы используем setReady для готовности в лобби
-        // А здесь можно обработать готовность в игре
+    // Игрок готов к битве (расставил корабли)
+    socket.on('playerShipsReady', () => {
         const player = players.get(socket.id);
         if (!player || !player.lobbyId) return;
         
+        const lobby = lobbies.get(player.lobbyId);
+        if (!lobby || !lobby.gameStarted) return;
+        
         console.log(`⚔️ Игрок ${player.name} готов к битве`);
+        
+        // Помечаем игрока как готового к битве
+        player.shipsReady = true;
+        const playerInLobby = lobby.players.find(p => p.id === socket.id);
+        if (playerInLobby) {
+            playerInLobby.shipsReady = true;
+        }
+        
+        // Проверяем, все ли игроки готовы к битве
+        const allShipsReady = lobby.players.every(p => {
+            const pl = players.get(p.id);
+            return pl && pl.shipsReady;
+        });
+        
+        if (allShipsReady) {
+            console.log(`🚀 Все игроки готовы к битве в лобби ${lobby.id}`);
+            
+            // Отправляем обновление хода
+            io.to(lobby.id).emit('turnUpdate', {
+                currentTurn: lobby.currentTurn
+            });
+        }
     });
     
     // Ход в игре
@@ -220,6 +249,12 @@ io.on('connection', (socket) => {
         
         const lobby = lobbies.get(player.lobbyId);
         if (!lobby || !lobby.gameStarted) return;
+        
+        // Проверяем, ход ли игрока
+        if (lobby.currentTurn !== socket.id) {
+            socket.emit('lobbyError', 'Сейчас не ваш ход!');
+            return;
+        }
         
         console.log(`🎯 Ход от ${player.name} в клетку ${data.index}`);
         
@@ -241,13 +276,59 @@ io.on('connection', (socket) => {
         const lobby = lobbies.get(player.lobbyId);
         if (!lobby) return;
         
+        const opponent = lobby.players.find(p => p.id !== socket.id);
+        if (!opponent) return;
+        
         console.log(`🎯 Результат выстрела от ${player.name}:`, data);
         
-        // Пересылаем результат стрелявшему
-        const opponent = lobby.players.find(p => p.id !== socket.id);
-        if (opponent) {
-            socket.to(lobby.id).emit('shotResult', data);
+        // Если попадание - ход остается у стрелявшего
+        // Если промах - ход переходит противнику
+        if (data.hit) {
+            // При попадании ход остается у стрелявшего
+            lobby.currentTurn = socket.id;
+            
+            // Отправляем результат стрелявшему
+            socket.emit('shotResult', {
+                index: data.index,
+                hit: data.hit,
+                killed: data.killed,
+                coords: data.coords
+            });
+            
+            // Отправляем противнику
+            socket.to(lobby.id).emit('enemyShotResult', {
+                index: data.index,
+                hit: data.hit,
+                killed: data.killed,
+                coords: data.coords
+            });
+        } else {
+            // При промахе ход переходит противнику
+            lobby.currentTurn = opponent.id;
+            
+            // Отправляем результат стрелявшему
+            socket.emit('shotResult', {
+                index: data.index,
+                hit: data.hit,
+                killed: data.killed,
+                coords: data.coords
+            });
+            
+            // Отправляем противнику
+            socket.to(lobby.id).emit('enemyShotResult', {
+                index: data.index,
+                hit: data.hit,
+                killed: data.killed,
+                coords: data.coords
+            });
         }
+        
+        // Отправляем обновление хода
+        io.to(lobby.id).emit('turnUpdate', {
+            currentTurn: lobby.currentTurn
+        });
+        
+        console.log(`🔄 Ход передан ${lobby.currentTurn === socket.id ? 'стрелявшему' : 'противнику'}`);
     });
     
     // Завершение игры
@@ -304,6 +385,7 @@ io.on('connection', (socket) => {
         
         player.lobbyId = null;
         player.ready = false;
+        player.shipsReady = false;
         
         socket.leave(lobby.id);
         
@@ -326,6 +408,58 @@ io.on('connection', (socket) => {
         broadcastLobbyList();
         
         console.log(`👋 Игрок ${player.name} покинул игру в лобби ${lobby.id}`);
+    });
+    
+    // Запуск игры (когда оба готовы в лобби)
+    socket.on('startGame', () => {
+        const player = players.get(socket.id);
+        if (!player || !player.lobbyId) return;
+        
+        const lobby = lobbies.get(player.lobbyId);
+        if (!lobby) return;
+        
+        // Проверяем, что игрок - хост
+        if (lobby.hostId !== socket.id) {
+            socket.emit('lobbyError', 'Только хост может начать игру');
+            return;
+        }
+        
+        // Проверяем, что оба игрока готовы
+        const allReady = lobby.players.every(p => p.ready);
+        if (!allReady) {
+            socket.emit('lobbyError', 'Не все игроки готовы');
+            return;
+        }
+        
+        // Проверяем минимальное количество игроков
+        if (lobby.players.length < 2) {
+            socket.emit('lobbyError', 'Недостаточно игроков');
+            return;
+        }
+        
+        lobby.gameStarted = true;
+        
+        // Определяем, кто ходит первым (случайно)
+        const firstPlayerIndex = Math.floor(Math.random() * lobby.players.length);
+        const firstPlayerId = lobby.players[firstPlayerIndex].id;
+        lobby.currentTurn = firstPlayerId;
+        
+        // Отправляем игрокам информацию о начале игры
+        lobby.players.forEach((player, index) => {
+            const playerSocket = io.sockets.sockets.get(player.id);
+            if (playerSocket) {
+                playerSocket.emit('gameStart', {
+                    canMove: player.id === firstPlayerId,
+                    playerNumber: index + 1,
+                    opponentName: lobby.players.find(p => p.id !== player.id)?.name || 'Противник'
+                });
+            }
+        });
+        
+        console.log(`🎮 Игра началась в лобби ${lobby.id}, первый ход у ${firstPlayerId}`);
+        
+        // Рассылаем обновленный список лобби
+        broadcastLobbyList();
     });
     
     // Отключение игрока

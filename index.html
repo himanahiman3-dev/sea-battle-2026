@@ -673,6 +673,7 @@
         let currentShipSize = 4;
         let isVertical = false;
         let playerTurn = true;
+        let myTurn = false; // Для мультиплеера - определяет, мой ли сейчас ход
         
         // Статистика
         let movesCount = 0;
@@ -696,6 +697,7 @@
         let currentLobby = null;
         let playerName = `Игрок_${Math.floor(Math.random() * 1000)}`;
         let isReady = false;
+        let myPlayerNumber = 0;
         
         // Для ИИ
         let aiMemory = {
@@ -834,20 +836,43 @@
                 }
             });
             
+            // НОВОЕ: Когда оба игрока готовы, сервер начинает игру
             socket.on('gameStart', (data) => {
                 console.log('🚀 Игра начинается:', data);
                 startMultiplayerGame(data);
                 showNotification('Игра начинается!', 'success');
             });
             
+            // НОВОЕ: Получение хода противника
             socket.on('enemyMove', (data) => {
                 console.log('🎯 Ход противника:', data);
-                handleEnemyMove(data.index);
+                // Противник сделал ход по нашей клетке
+                handleEnemyMove(data);
             });
             
+            // НОВОЕ: Результат нашего выстрела
             socket.on('shotResult', (data) => {
-                console.log('🎯 Результат выстрела:', data);
-                handleShotResult(data);
+                console.log('🎯 Результат нашего выстрела:', data);
+                handleOurShotResult(data);
+            });
+            
+            // НОВОЕ: Результат выстрела противника по нам
+            socket.on('enemyShotResult', (data) => {
+                console.log('🎯 Результат выстрела противника:', data);
+                handleEnemyShotResult(data);
+            });
+            
+            // НОВОЕ: Обновление хода
+            socket.on('turnUpdate', (data) => {
+                console.log('🔄 Обновление хода:', data);
+                myTurn = data.currentTurn === socket.id;
+                updateTurnIndicator();
+                
+                if (myTurn) {
+                    gameStatus.textContent = 'Ваш ход! Атакуйте поле противника.';
+                } else {
+                    gameStatus.textContent = 'Ход противника...';
+                }
             });
             
             socket.on('gameOver', (data) => {
@@ -1024,11 +1049,14 @@
             showNotification('Вы покинули лобби', 'info');
         }
         
+        // ==================== МУЛЬТИПЛЕЕР ИГРА ====================
+        
         function startMultiplayerGame(data) {
             console.log('Начало мультиплеерной игры');
             
             gameMode = 'multiplayer';
-            playerTurn = data.canMove;
+            myPlayerNumber = data.playerNumber;
+            myTurn = data.canMove;
             gameActive = true;
             placementPhase = true;
             
@@ -1041,9 +1069,115 @@
             
             // Обновляем информацию о режиме
             document.getElementById('game-mode-display').textContent = 'Против игрока';
-            document.getElementById('turn-indicator').textContent = data.canMove ? 'Ваш ход' : 'Ход противника';
+            updateTurnIndicator();
             
-            gameStatus.textContent = 'Расставьте ваши корабли...';
+            if (myTurn) {
+                gameStatus.textContent = 'Расставьте корабли. У вас первый ход!';
+            } else {
+                gameStatus.textContent = 'Расставьте корабли. Первый ход у противника.';
+            }
+        }
+        
+        function handleEnemyMove(data) {
+            // Противник выстрелил в нашу клетку
+            const index = data.index;
+            const cell = document.getElementById(`player-${index}`);
+            
+            // Проверяем попадание
+            const shipId = playerGrid[index];
+            if (shipId) {
+                // Попадание
+                cell.classList.add('hit');
+                const ship = playerShips.get(shipId);
+                ship.health--;
+                
+                // Отправляем результат на сервер
+                socket.emit('shotResult', {
+                    index: index,
+                    hit: true,
+                    killed: ship.health === 0,
+                    coords: ship.health === 0 ? ship.cells : null
+                });
+                
+                if (ship.health === 0) {
+                    markAroundShip(ship.cells, 'player');
+                }
+                
+                // Проверка поражения
+                if (checkPlayerDefeat()) {
+                    socket.emit('gameOver', { winner: data.playerId });
+                }
+            } else {
+                // Промах
+                cell.classList.add('miss');
+                socket.emit('shotResult', {
+                    index: index,
+                    hit: false,
+                    killed: false
+                });
+            }
+            
+            updateGameInfo();
+        }
+        
+        function handleOurShotResult(data) {
+            // Результат нашего выстрела
+            const cell = document.getElementById(`enemy-${data.index}`);
+            
+            if (data.hit) {
+                cell.classList.add('hit');
+                playerHits++;
+                
+                if (data.killed) {
+                    markAroundShip(data.coords, 'enemy');
+                    gameStatus.textContent = '💀 КОРАБЛЬ ПРОТИВНИКА УБИТ!';
+                } else {
+                    gameStatus.textContent = '🎯 ПОПАДАНИЕ!';
+                }
+                
+                // Проверка победы
+                if (checkEnemyDefeat()) {
+                    endGame(true);
+                    return;
+                }
+            } else {
+                cell.classList.add('miss');
+                gameStatus.textContent = '🌀 ПРОМАХ!';
+            }
+            
+            updateGameInfo();
+        }
+        
+        function handleEnemyShotResult(data) {
+            // Результат выстрела противника по нам
+            const cell = document.getElementById(`player-${data.index}`);
+            
+            if (data.hit) {
+                cell.classList.add('hit');
+                const shipId = playerGrid[data.index];
+                if (shipId) {
+                    const ship = playerShips.get(shipId);
+                    ship.health--;
+                    
+                    if (ship.health === 0) {
+                        markAroundShip(ship.cells, 'player');
+                        gameStatus.textContent = '💔 Ваш корабль уничтожен!';
+                    } else {
+                        gameStatus.textContent = '💥 Попадание по вашему кораблю!';
+                    }
+                }
+                
+                // Проверка поражения
+                if (checkPlayerDefeat()) {
+                    endGame(false);
+                    return;
+                }
+            } else {
+                cell.classList.add('miss');
+                gameStatus.textContent = '🌀 Противник промахнулся!';
+            }
+            
+            updateGameInfo();
         }
         
         // ==================== ИГРА ПРОТИВ ИИ ====================
@@ -1397,12 +1531,16 @@
         
         function startBattle() {
             placementPhase = false;
-            playerTurn = true;
             
-            // Обновление UI
-            document.getElementById('ship-factory').classList.add('hidden');
             if (gameMode === 'ai') {
+                playerTurn = true;
                 document.getElementById('ai-move-btn').disabled = false;
+                gameStatus.textContent = 'Битва началась! Ваш ход.';
+            } else if (gameMode === 'multiplayer') {
+                // В мультиплеере сообщаем серверу, что мы готовы
+                socket.emit('playerShipsReady');
+                gameStatus.textContent = 'Ожидание готовности противника...';
+                document.getElementById('start-game-btn').disabled = true;
             }
             
             // Деактивация поля игрока
@@ -1417,19 +1555,28 @@
             }
             
             // Обновляем информацию
-            document.getElementById('turn-indicator').textContent = playerTurn ? 'Ваш ход' : 'Ход противника';
-            gameStatus.textContent = playerTurn ? 'Битва началась! Ваш ход.' : 'Битва началась! Ход противника.';
-            
-            // В мультиплеере сообщаем серверу о готовности
-            if (gameMode === 'multiplayer' && socket) {
-                socket.emit('playerReady');
-            }
+            updateTurnIndicator();
+            document.getElementById('ship-factory').classList.add('hidden');
         }
         
         // ==================== ИГРОВОЙ ПРОЦЕСС ====================
         
         function attackEnemy(index) {
-            if (!gameActive || !playerTurn) return;
+            if (!gameActive) return;
+            
+            if (gameMode === 'multiplayer') {
+                // В мультиплеере проверяем, наш ли ход
+                if (!myTurn) {
+                    showNotification('Сейчас не ваш ход!', 'warning');
+                    return;
+                }
+            } else {
+                // В игре с ИИ проверяем, наш ли ход
+                if (!playerTurn) {
+                    showNotification('Сейчас ход ИИ!', 'warning');
+                    return;
+                }
+            }
             
             const cell = document.getElementById(`enemy-${index}`);
             
@@ -1445,8 +1592,8 @@
             if (gameMode === 'multiplayer') {
                 // В мультиплеере отправляем ход серверу
                 socket.emit('makeMove', { index: index });
-                playerTurn = false;
-                document.getElementById('turn-indicator').textContent = 'Ход противника';
+                myTurn = false;
+                updateTurnIndicator();
                 gameStatus.textContent = 'Ваш ход отправлен...';
             } else {
                 // В игре с ИИ проверяем попадание
@@ -1472,6 +1619,9 @@
                         endGame(true);
                         return;
                     }
+                    
+                    // При попадании ход остается у игрока
+                    // ИИ не ходит
                 } else {
                     // Промах
                     cell.classList.add('miss');
@@ -1481,78 +1631,6 @@
                     // Ход ИИ
                     setTimeout(() => aiMakeMove(), 1000);
                 }
-            }
-            
-            updateGameInfo();
-        }
-        
-        function handleEnemyMove(index) {
-            const cell = document.getElementById(`player-${index}`);
-            
-            // Проверка попадания
-            const shipId = playerGrid[index];
-            if (shipId) {
-                // Попадание
-                cell.classList.add('hit');
-                const ship = playerShips.get(shipId);
-                ship.health--;
-                
-                // Отправляем результат
-                socket.emit('shotResult', {
-                    index: index,
-                    hit: true,
-                    killed: ship.health === 0,
-                    coords: ship.health === 0 ? ship.cells : null
-                });
-                
-                if (ship.health === 0) {
-                    markAroundShip(ship.cells, 'player');
-                }
-                
-                // Проверка поражения
-                if (checkPlayerDefeat()) {
-                    socket.emit('gameOver');
-                }
-            } else {
-                // Промах
-                cell.classList.add('miss');
-                socket.emit('shotResult', {
-                    index: index,
-                    hit: false,
-                    killed: false
-                });
-                playerTurn = true;
-                document.getElementById('turn-indicator').textContent = 'Ваш ход';
-                gameStatus.textContent = 'Противник промахнулся! Ваш ход.';
-            }
-            
-            updateGameInfo();
-        }
-        
-        function handleShotResult(data) {
-            const cell = document.getElementById(`enemy-${data.index}`);
-            
-            if (data.hit) {
-                cell.classList.add('hit');
-                playerHits++;
-                
-                if (data.killed) {
-                    markAroundShip(data.coords, 'enemy');
-                    gameStatus.textContent = '💀 КОРАБЛЬ ПРОТИВНИКА УБИТ! Продолжайте атаку!';
-                } else {
-                    gameStatus.textContent = '🎯 ПОПАДАНИЕ! Продолжайте атаку!';
-                }
-                
-                // Проверка победы
-                if (checkEnemyDefeat()) {
-                    endGame(true);
-                    return;
-                }
-            } else {
-                cell.classList.add('miss');
-                playerTurn = false;
-                document.getElementById('turn-indicator').textContent = 'Ход противника';
-                gameStatus.textContent = '🌀 ПРОМАХ! Ход противника.';
             }
             
             updateGameInfo();
@@ -1829,7 +1907,7 @@
                 // Промах
                 cell.classList.add('miss');
                 playerTurn = true;
-                document.getElementById('turn-indicator').textContent = 'Ваш ход';
+                updateTurnIndicator();
                 gameStatus.textContent = '🌀 ИИ промахнулся! Ваш ход.';
             }
             
@@ -1889,6 +1967,7 @@
         function endGame(playerWon) {
             gameActive = false;
             playerTurn = false;
+            myTurn = false;
             
             // Блокируем все клетки
             for (let i = 0; i < 100; i++) {
@@ -1931,6 +2010,18 @@
             }
             
             document.getElementById('ships-count').textContent = `${playerShipsLeft}/${enemyShipsLeft}`;
+        }
+        
+        function updateTurnIndicator() {
+            let turnText = '';
+            
+            if (gameMode === 'ai') {
+                turnText = playerTurn ? 'Ваш ход' : 'Ход ИИ';
+            } else if (gameMode === 'multiplayer') {
+                turnText = myTurn ? 'Ваш ход' : 'Ход противника';
+            }
+            
+            document.getElementById('turn-indicator').textContent = turnText;
         }
         
         function surrender() {

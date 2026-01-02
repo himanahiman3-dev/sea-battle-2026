@@ -1,7 +1,7 @@
 {
-  "name": "sea-battle-neon",
-  "version": "2.0.0",
-  "description": "Морской бой с авиаударом - неоновый стиль",
+  "name": "sea-battle-ai",
+  "version": "3.0.0",
+  "description": "Морской бой с ИИ разных уровней сложности",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -11,10 +11,19 @@
     "express": "^4.18.2",
     "socket.io": "^4.7.2"
   },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  },
   "engines": {
     "node": ">=16.0.0"
   },
-  "keywords": ["battleship", "game", "multiplayer", "socket.io", "neon"],
+  "keywords": [
+    "battleship",
+    "ai",
+    "game",
+    "javascript",
+    "multiplayer"
+  ],
   "author": "Sea Battle Team",
   "license": "MIT"
 }

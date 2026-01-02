@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Морской Бой - Полная версия</title>
+    <title>Морской Бой - С авиаударами</title>
     <style>
         :root {
             --primary: #1a237e;
@@ -207,6 +207,14 @@
             background: linear-gradient(45deg, var(--neon-red), #D50000);
         }
 
+        .btn-warning {
+            background: linear-gradient(45deg, #ff9800, #ff5722);
+        }
+
+        .btn-info {
+            background: linear-gradient(45deg, var(--neon-purple), #7b1fa2);
+        }
+
         /* Экран игры */
         .game-screen {
             background: rgba(13, 71, 161, 0.9);
@@ -332,6 +340,17 @@
             border: 1px dashed #4CAF50;
         }
 
+        .cell.airstrike-preview {
+            background: rgba(255, 23, 68, 0.5);
+            border: 2px dashed var(--neon-red);
+            animation: pulse 1s infinite;
+        }
+
+        .cell.recon {
+            background: rgba(0, 176, 255, 0.5);
+            border: 2px solid var(--neon-blue);
+        }
+
         /* Статус игры */
         .status {
             text-align: center;
@@ -384,6 +403,80 @@
             border-color: var(--neon-blue);
         }
 
+        /* Панель авиаударов */
+        .airstrike-panel {
+            background: rgba(0, 0, 0, 0.3);
+            padding: 20px;
+            border-radius: 10px;
+            margin: 20px 0;
+            border: 2px solid var(--neon-purple);
+        }
+
+        .airstrike-title {
+            text-align: center;
+            color: var(--neon-purple);
+            margin-bottom: 15px;
+            font-size: 1.3em;
+        }
+
+        .airstrike-types {
+            display: flex;
+            gap: 15px;
+            justify-content: center;
+            flex-wrap: wrap;
+            margin: 15px 0;
+        }
+
+        .airstrike-btn {
+            padding: 12px 20px;
+            border: 2px solid transparent;
+            background: rgba(0, 0, 0, 0.4);
+            color: var(--text);
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.3s;
+            min-width: 150px;
+            text-align: center;
+        }
+
+        .airstrike-btn:hover:not(:disabled) {
+            transform: translateY(-3px);
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
+        }
+
+        .airstrike-btn.active {
+            border-color: var(--neon-yellow);
+            box-shadow: 0 0 10px rgba(255, 235, 59, 0.5);
+        }
+
+        .airstrike-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .strike-btn {
+            border-color: var(--neon-red);
+            color: #ffcdd2;
+        }
+
+        .bomb-btn {
+            border-color: #FF9800;
+            color: #FFE0B2;
+        }
+
+        .recon-btn {
+            border-color: var(--neon-blue);
+            color: #B3E5FC;
+        }
+
+        .airstrike-count {
+            display: block;
+            font-size: 1.2em;
+            font-weight: bold;
+            margin-top: 5px;
+            color: var(--neon-yellow);
+        }
+
         /* Уведомления */
         .notification {
             position: fixed;
@@ -405,6 +498,16 @@
             border-left-color: var(--neon-red);
         }
 
+        .notification-warning {
+            border-left-color: var(--neon-yellow);
+        }
+
+        @keyframes pulse {
+            0% { opacity: 0.7; }
+            50% { opacity: 1; }
+            100% { opacity: 0.7; }
+        }
+
         @media (max-width: 768px) {
             .game-area {
                 flex-direction: column;
@@ -420,6 +523,11 @@
                 width: 30px;
                 height: 30px;
             }
+            
+            .airstrike-types {
+                flex-direction: column;
+                align-items: center;
+            }
         }
     </style>
 </head>
@@ -427,8 +535,8 @@
     <div class="container">
         <!-- Заголовок -->
         <div class="header">
-            <h1>⚓ Морской Бой</h1>
-            <p>Сразитесь с ИИ или играйте с друзьями онлайн!</p>
+            <h1>⚓ Морской Бой - С авиаударами</h1>
+            <p>Сразитесь с ИИ или играйте с друзьями онлайн! Используйте тактические авиаудары!</p>
         </div>
 
         <!-- Главное меню -->
@@ -597,8 +705,21 @@
                     <div id="hits-count" class="info-value">0/0</div>
                 </div>
                 <div class="info-item">
-                    <div class="info-label">Корабли</div>
-                    <div id="ships-count" class="info-value">10/10</div>
+                    <div class="info-label">Авиаудары</div>
+                    <div id="airstrikes-count" class="info-value">3/3</div>
+                </div>
+            </div>
+
+            <!-- Панель авиаударов -->
+            <div id="airstrike-panel" class="airstrike-panel hidden">
+                <h3 class="airstrike-title">✈️ Авиаудары (вместо обычного выстрела)</h3>
+                <div class="airstrike-types" id="airstrike-types-container">
+                    <!-- Кнопки авиаударов будут здесь -->
+                </div>
+                <div style="text-align: center; margin-top: 15px;">
+                    <button class="btn btn-warning" onclick="cancelAirstrike()" id="cancel-airstrike-btn" style="display: none;">
+                        ❌ Отменить авиаудар
+                    </button>
                 </div>
             </div>
 
@@ -643,7 +764,10 @@
                 <button class="btn" onclick="aiMakeMove()" id="ai-move-btn" disabled>
                     🤖 Ход ИИ
                 </button>
-                <button class="btn" onclick="surrender()">
+                <button class="btn btn-info" onclick="useAirstrike()" id="use-airstrike-btn" disabled>
+                    ✈️ Авиаудар
+                </button>
+                <button class="btn btn-danger" onclick="surrender()">
                     🏳️ Сдаться
                 </button>
                 <button class="btn" onclick="restartGame()">
@@ -674,6 +798,20 @@
         let isVertical = false;
         let playerTurn = true;
         let myTurn = false; // Для мультиплеера - определяет, мой ли сейчас ход
+        
+        // Авиаудары
+        let airstrikeActive = false;
+        let currentAirstrikeType = null; // 'strike', 'bomb', 'recon'
+        let airstrikesAvailable = {
+            strike: 2,  // Штурмовики
+            bomb: 2,    // Бомбардировщики
+            recon: 1    // Разведка
+        };
+        let airstrikesUsed = {
+            strike: 0,
+            bomb: 0,
+            recon: 0
+        };
         
         // Статистика
         let movesCount = 0;
@@ -836,42 +974,43 @@
                 }
             });
             
-            // НОВОЕ: Когда оба игрока готовы, сервер начинает игру
+            // Когда оба игрока готовы, сервер начинает игру
             socket.on('gameStart', (data) => {
                 console.log('🚀 Игра начинается:', data);
                 startMultiplayerGame(data);
                 showNotification('Игра начинается!', 'success');
             });
             
-            // НОВОЕ: Получение хода противника
+            // Получение хода противника
             socket.on('enemyMove', (data) => {
                 console.log('🎯 Ход противника:', data);
-                // Противник сделал ход по нашей клетке
                 handleEnemyMove(data);
             });
             
-            // НОВОЕ: Результат нашего выстрела
+            // Результат нашего выстрела
             socket.on('shotResult', (data) => {
                 console.log('🎯 Результат нашего выстрела:', data);
                 handleOurShotResult(data);
             });
             
-            // НОВОЕ: Результат выстрела противника по нам
+            // Результат выстрела противника по нам
             socket.on('enemyShotResult', (data) => {
                 console.log('🎯 Результат выстрела противника:', data);
                 handleEnemyShotResult(data);
             });
             
-            // НОВОЕ: Обновление хода
+            // Обновление хода
             socket.on('turnUpdate', (data) => {
                 console.log('🔄 Обновление хода:', data);
                 myTurn = data.currentTurn === socket.id;
                 updateTurnIndicator();
+                updateAirstrikeButtons();
                 
                 if (myTurn) {
                     gameStatus.textContent = 'Ваш ход! Атакуйте поле противника.';
                 } else {
                     gameStatus.textContent = 'Ход противника...';
+                    cancelAirstrike();
                 }
             });
             
@@ -1202,6 +1341,366 @@
             generateAIShips();
         }
         
+        // ==================== АВИАУДАРЫ ====================
+        
+        function createAirstrikeButtons() {
+            const container = document.getElementById('airstrike-types-container');
+            container.innerHTML = '';
+            
+            const airstrikes = [
+                {
+                    type: 'strike',
+                    name: '✈️ Штурмовики',
+                    description: 'Линия 1x5 клеток',
+                    remaining: airstrikesAvailable.strike - airstrikesUsed.strike
+                },
+                {
+                    type: 'bomb',
+                    name: '💣 Бомбардировщики',
+                    description: 'Квадрат 2x2 клетки',
+                    remaining: airstrikesAvailable.bomb - airstrikesUsed.bomb
+                },
+                {
+                    type: 'recon',
+                    name: '🔍 Разведка',
+                    description: 'Область 3x3 (не наносит урон)',
+                    remaining: airstrikesAvailable.recon - airstrikesUsed.recon
+                }
+            ];
+            
+            airstrikes.forEach(airstrike => {
+                const button = document.createElement('button');
+                button.className = `airstrike-btn ${airstrike.type}-btn`;
+                button.id = `airstrike-btn-${airstrike.type}`;
+                button.onclick = () => selectAirstrikeType(airstrike.type);
+                button.disabled = airstrike.remaining <= 0;
+                
+                button.innerHTML = `
+                    <div style="font-weight: bold; font-size: 1.1em;">${airstrike.name}</div>
+                    <div style="font-size: 0.9em; opacity: 0.9; margin: 5px 0;">${airstrike.description}</div>
+                    <span class="airstrike-count">${airstrike.remaining}/${airstrikesAvailable[airstrike.type]}</span>
+                `;
+                
+                container.appendChild(button);
+            });
+        }
+        
+        function selectAirstrikeType(type) {
+            if (airstrikeActive && currentAirstrikeType === type) {
+                cancelAirstrike();
+                return;
+            }
+            
+            // Проверяем доступность
+            const remaining = airstrikesAvailable[type] - airstrikesUsed[type];
+            if (remaining <= 0) {
+                showNotification('Авиаудары этого типа закончились!', 'error');
+                return;
+            }
+            
+            currentAirstrikeType = type;
+            airstrikeActive = true;
+            
+            // Обновляем UI
+            document.querySelectorAll('.airstrike-btn').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            document.getElementById(`airstrike-btn-${type}`).classList.add('active');
+            
+            document.getElementById('cancel-airstrike-btn').style.display = 'inline-block';
+            
+            // Обновляем статус
+            let description = '';
+            switch(type) {
+                case 'strike':
+                    description = 'Выберите центральную клетку для горизонтальной линии 1x5';
+                    break;
+                case 'bomb':
+                    description = 'Выберите левую верхнюю клетку для квадрата 2x2';
+                    break;
+                case 'recon':
+                    description = 'Выберите центральную клетку для разведки области 3x3';
+                    break;
+            }
+            gameStatus.textContent = `✈️ ${description}`;
+            
+            showNotification(`Выбран авиаудар: ${type === 'strike' ? 'Штурмовики' : type === 'bomb' ? 'Бомбардировщики' : 'Разведка'}`, 'warning');
+        }
+        
+        function cancelAirstrike() {
+            airstrikeActive = false;
+            currentAirstrikeType = null;
+            
+            // Очищаем предпросмотр
+            clearAirstrikePreview();
+            
+            // Обновляем UI
+            document.querySelectorAll('.airstrike-btn').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            document.getElementById('cancel-airstrike-btn').style.display = 'none';
+            
+            // Обновляем статус
+            const turnText = (gameMode === 'ai' && playerTurn) || (gameMode === 'multiplayer' && myTurn) ? 
+                'Ваш ход! Выберите цель или авиаудар.' : 'Ход противника...';
+            gameStatus.textContent = turnText;
+            
+            showNotification('Авиаудар отменен', 'info');
+        }
+        
+        function useAirstrike() {
+            if (!airstrikeActive) {
+                showNotification('Сначала выберите тип авиаудара', 'warning');
+                return;
+            }
+            
+            showNotification('Теперь выберите клетку на поле противника для авиаудара', 'info');
+        }
+        
+        function executeAirstrike(index) {
+            if (!airstrikeActive || !currentAirstrikeType) return false;
+            
+            const remaining = airstrikesAvailable[currentAirstrikeType] - airstrikesUsed[currentAirstrikeType];
+            if (remaining <= 0) {
+                showNotification('Авиаудары этого типа закончились!', 'error');
+                cancelAirstrike();
+                return false;
+            }
+            
+            let cells = [];
+            let isValid = true;
+            
+            // Получаем клетки для авиаудара
+            switch(currentAirstrikeType) {
+                case 'strike':
+                    cells = getStrikeCells(index);
+                    isValid = cells.length === 5;
+                    break;
+                case 'bomb':
+                    cells = getBombCells(index);
+                    isValid = cells.length === 4;
+                    break;
+                case 'recon':
+                    cells = getReconCells(index);
+                    isValid = cells.length > 0;
+                    break;
+            }
+            
+            if (!isValid) {
+                showNotification('Невозможно применить авиаудар в этой области!', 'error');
+                return false;
+            }
+            
+            // Используем авиаудар
+            airstrikesUsed[currentAirstrikeType]++;
+            
+            // Выполняем авиаудар
+            const result = performAirstrike(cells);
+            
+            // Обновляем UI
+            createAirstrikeButtons();
+            updateAirstrikesCount();
+            cancelAirstrike();
+            
+            // Передаем ход
+            if (gameMode === 'ai') {
+                playerTurn = false;
+                setTimeout(() => aiMakeMove(), 1500);
+            } else if (gameMode === 'multiplayer') {
+                myTurn = false;
+                // Отправляем информацию об авиаударе на сервер
+                socket.emit('airstrike', {
+                    type: currentAirstrikeType,
+                    index: index,
+                    cells: cells,
+                    result: result
+                });
+            }
+            
+            return true;
+        }
+        
+        function getStrikeCells(centerIndex) {
+            const row = Math.floor(centerIndex / 10);
+            const col = centerIndex % 10;
+            const cells = [];
+            
+            // Проверяем, помещается ли линия 1x5
+            if (col < 2 || col > 7) return [];
+            
+            for (let i = -2; i <= 2; i++) {
+                cells.push(row * 10 + (col + i));
+            }
+            
+            return cells;
+        }
+        
+        function getBombCells(topLeftIndex) {
+            const row = Math.floor(topLeftIndex / 10);
+            const col = topLeftIndex % 10;
+            const cells = [];
+            
+            // Проверяем, помещается ли квадрат 2x2
+            if (row > 8 || col > 8) return [];
+            
+            for (let dr = 0; dr < 2; dr++) {
+                for (let dc = 0; dc < 2; dc++) {
+                    cells.push((row + dr) * 10 + (col + dc));
+                }
+            }
+            
+            return cells;
+        }
+        
+        function getReconCells(centerIndex) {
+            const row = Math.floor(centerIndex / 10);
+            const col = centerIndex % 10;
+            const cells = [];
+            
+            for (let dr = -1; dr <= 1; dr++) {
+                for (let dc = -1; dc <= 1; dc++) {
+                    const newRow = row + dr;
+                    const newCol = col + dc;
+                    if (newRow >= 0 && newRow < 10 && newCol >= 0 && newCol < 10) {
+                        cells.push(newRow * 10 + newCol);
+                    }
+                }
+            }
+            
+            return cells;
+        }
+        
+        function performAirstrike(cells) {
+            let hits = 0;
+            let shipsHit = new Set();
+            
+            cells.forEach(index => {
+                const cell = document.getElementById(`enemy-${index}`);
+                
+                if (currentAirstrikeType === 'recon') {
+                    // Разведка только показывает состояние клеток
+                    cell.classList.add('recon');
+                    
+                    if (enemyGrid[index]) {
+                        const ship = enemyShips.get(enemyGrid[index]);
+                        if (ship && ship.health > 0) {
+                            // Показываем, что здесь есть корабль (но не топим его)
+                            cell.classList.add('hit');
+                            setTimeout(() => {
+                                cell.classList.remove('hit');
+                            }, 2000);
+                            hits++;
+                            shipsHit.add(enemyGrid[index]);
+                        }
+                    }
+                } else {
+                    // Штурмовики и бомбардировщики наносят урон
+                    if (!cell.classList.contains('hit') && !cell.classList.contains('miss')) {
+                        if (enemyGrid[index]) {
+                            // Попадание
+                            cell.classList.add('hit');
+                            const ship = enemyShips.get(enemyGrid[index]);
+                            ship.health--;
+                            hits++;
+                            shipsHit.add(enemyGrid[index]);
+                            
+                            if (ship.health === 0) {
+                                markAroundShip(ship.cells, 'enemy');
+                            }
+                        } else {
+                            // Промах
+                            cell.classList.add('miss');
+                        }
+                    }
+                }
+            });
+            
+            // Обновляем статистику
+            if (currentAirstrikeType !== 'recon') {
+                playerShots += cells.length;
+                playerHits += hits;
+            }
+            
+            // Проверяем победу
+            if (currentAirstrikeType !== 'recon' && checkAIDefeat()) {
+                endGame(true);
+            }
+            
+            // Показываем результат
+            let message = '';
+            if (currentAirstrikeType === 'recon') {
+                message = hits > 0 ? 
+                    `🔍 Разведка обнаружила корабли в ${hits} клетках!` :
+                    '🔍 Разведка: кораблей не обнаружено';
+            } else {
+                message = hits > 0 ?
+                    `✈️ Авиаудар попал в ${hits} клеток!` :
+                    '✈️ Авиаудар не нанес урона!';
+            }
+            
+            gameStatus.textContent = message;
+            showNotification(message, hits > 0 ? 'success' : 'warning');
+            
+            updateGameInfo();
+            
+            return { hits: hits, shipsHit: Array.from(shipsHit) };
+        }
+        
+        function clearAirstrikePreview() {
+            // Очищаем все предпросмотры авиаударов
+            for (let i = 0; i < 100; i++) {
+                const cell = document.getElementById(`enemy-${i}`);
+                cell.classList.remove('airstrike-preview', 'recon');
+            }
+        }
+        
+        function showAirstrikePreview(index) {
+            if (!airstrikeActive || !currentAirstrikeType) return;
+            
+            clearAirstrikePreview();
+            
+            let cells = [];
+            switch(currentAirstrikeType) {
+                case 'strike':
+                    cells = getStrikeCells(index);
+                    break;
+                case 'bomb':
+                    cells = getBombCells(index);
+                    break;
+                case 'recon':
+                    cells = getReconCells(index);
+                    break;
+            }
+            
+            // Показываем предпросмотр только если область валидна
+            if (cells.length > 0) {
+                cells.forEach(cellIndex => {
+                    const cell = document.getElementById(`enemy-${cellIndex}`);
+                    if (cell) {
+                        cell.classList.add('airstrike-preview');
+                    }
+                });
+            }
+        }
+        
+        function updateAirstrikesCount() {
+            const totalAvailable = Object.values(airstrikesAvailable).reduce((a, b) => a + b, 0);
+            const totalUsed = Object.values(airstrikesUsed).reduce((a, b) => a + b, 0);
+            document.getElementById('airstrikes-count').textContent = `${totalAvailable - totalUsed}/${totalAvailable}`;
+        }
+        
+        function updateAirstrikeButtons() {
+            const isMyTurn = (gameMode === 'ai' && playerTurn) || (gameMode === 'multiplayer' && myTurn);
+            document.querySelectorAll('.airstrike-btn').forEach(btn => {
+                const type = btn.id.replace('airstrike-btn-', '');
+                const remaining = airstrikesAvailable[type] - airstrikesUsed[type];
+                
+                btn.disabled = !isMyTurn || remaining <= 0;
+            });
+            
+            document.getElementById('use-airstrike-btn').disabled = !isMyTurn;
+        }
+        
         // ==================== ОБЩАЯ ЛОГИКА ИГРЫ ====================
         
         function initGame() {
@@ -1209,7 +1708,15 @@
             playerGrid = Array(100).fill(null);
             enemyGrid = Array(100).fill(null);
             playerShips.clear();
+            enemyShips.clear();
             placedShips = { 4: 0, 3: 0, 2: 0, 1: 0 };
+            
+            // Сброс авиаударов
+            airstrikesUsed = { strike: 0, bomb: 0, recon: 0 };
+            airstrikeActive = false;
+            currentAirstrikeType = null;
+            
+            // Сброс статистики
             movesCount = 0;
             playerHits = 0;
             playerShots = 0;
@@ -1219,14 +1726,19 @@
             // Создаем сетки
             createGrids();
             createShipButtons();
+            createAirstrikeButtons();
             selectShipSize(4);
             
             // Обновляем статус
             gameStatus.textContent = 'Расставьте ваши корабли на поле';
             document.getElementById('start-game-btn').disabled = true;
+            document.getElementById('airstrike-panel').classList.add('hidden');
             
             // Скрываем кнопку хода ИИ если не игра с ИИ
             document.getElementById('ai-move-btn').classList.toggle('hidden', gameMode !== 'ai');
+            document.getElementById('use-airstrike-btn').disabled = true;
+            
+            updateAirstrikesCount();
         }
         
         function createGrids() {
@@ -1257,6 +1769,16 @@
                 
                 // Обработчик для атаки
                 cell.addEventListener('click', () => attackEnemy(i));
+                cell.addEventListener('mouseenter', () => {
+                    if (airstrikeActive) {
+                        showAirstrikePreview(i);
+                    }
+                });
+                cell.addEventListener('mouseleave', () => {
+                    if (airstrikeActive) {
+                        clearAirstrikePreview();
+                    }
+                });
                 
                 enemyGridEl.appendChild(cell);
             }
@@ -1298,6 +1820,7 @@
         
         function rotateShip() {
             isVertical = !isVertical;
+            showNotification(`Поворот: ${isVertical ? 'Вертикальный' : 'Горизонтальный'}`, 'info');
         }
         
         function showShipPreview(index) {
@@ -1532,10 +2055,16 @@
         function startBattle() {
             placementPhase = false;
             
+            // Показываем панель авиаударов
+            document.getElementById('airstrike-panel').classList.remove('hidden');
+            document.getElementById('ship-factory').classList.add('hidden');
+            
             if (gameMode === 'ai') {
                 playerTurn = true;
                 document.getElementById('ai-move-btn').disabled = false;
-                gameStatus.textContent = 'Битва началась! Ваш ход.';
+                document.getElementById('use-airstrike-btn').disabled = false;
+                updateAirstrikeButtons();
+                gameStatus.textContent = 'Битва началась! Ваш ход. Используйте обычный выстрел или авиаудар.';
             } else if (gameMode === 'multiplayer') {
                 // В мультиплеере сообщаем серверу, что мы готовы
                 socket.emit('playerShipsReady');
@@ -1556,7 +2085,6 @@
             
             // Обновляем информацию
             updateTurnIndicator();
-            document.getElementById('ship-factory').classList.add('hidden');
         }
         
         // ==================== ИГРОВОЙ ПРОЦЕСС ====================
@@ -1581,11 +2109,21 @@
             const cell = document.getElementById(`enemy-${index}`);
             
             // Проверка, не стреляли ли уже сюда
-            if (cell.classList.contains('hit') || cell.classList.contains('miss')) {
+            if (cell.classList.contains('hit') || cell.classList.contains('miss') || cell.classList.contains('recon')) {
                 showNotification('Вы уже стреляли в эту клетку!', 'warning');
                 return;
             }
             
+            // Если активен авиаудар, выполняем его
+            if (airstrikeActive) {
+                const success = executeAirstrike(index);
+                if (success) {
+                    updateGameInfo();
+                }
+                return;
+            }
+            
+            // Обычный выстрел
             movesCount++;
             playerShots++;
             
@@ -1594,6 +2132,7 @@
                 socket.emit('makeMove', { index: index });
                 myTurn = false;
                 updateTurnIndicator();
+                updateAirstrikeButtons();
                 gameStatus.textContent = 'Ваш ход отправлен...';
             } else {
                 // В игре с ИИ проверяем попадание
@@ -1627,6 +2166,7 @@
                     cell.classList.add('miss');
                     playerTurn = false;
                     gameStatus.textContent = '🌀 ПРОМАХ! Ход ИИ...';
+                    updateAirstrikeButtons();
                     
                     // Ход ИИ
                     setTimeout(() => aiMakeMove(), 1000);
@@ -1908,7 +2448,8 @@
                 cell.classList.add('miss');
                 playerTurn = true;
                 updateTurnIndicator();
-                gameStatus.textContent = '🌀 ИИ промахнулся! Ваш ход.';
+                updateAirstrikeButtons();
+                gameStatus.textContent = '🌀 ИИ промахнулся! Ваш ход. Используйте обычный выстрел или авиаудар.';
             }
             
             updateGameInfo();
@@ -1968,18 +2509,27 @@
             gameActive = false;
             playerTurn = false;
             myTurn = false;
+            airstrikeActive = false;
             
             // Блокируем все клетки
             for (let i = 0; i < 100; i++) {
                 document.getElementById(`enemy-${i}`).style.cursor = 'default';
             }
             
+            // Деактивируем кнопки
+            document.querySelectorAll('.airstrike-btn').forEach(btn => {
+                btn.disabled = true;
+            });
+            document.getElementById('use-airstrike-btn').disabled = true;
+            
             if (playerWon) {
-                gameStatus.textContent = '🎉 ПОБЕДА!';
+                gameStatus.textContent = '🎉 ПОБЕДА! Вы уничтожили все корабли противника!';
                 gameStatus.style.borderColor = 'var(--neon-green)';
+                showNotification('🎉 Поздравляем с победой!', 'success');
             } else {
-                gameStatus.textContent = '💀 ПОРАЖЕНИЕ!';
+                gameStatus.textContent = '💀 ПОРАЖЕНИЕ! Все ваши корабли уничтожены.';
                 gameStatus.style.borderColor = 'var(--neon-red)';
+                showNotification('💀 К сожалению, вы проиграли.', 'error');
             }
             
             // В мультиплеере сообщаем серверу о завершении игры
@@ -2010,6 +2560,7 @@
             }
             
             document.getElementById('ships-count').textContent = `${playerShipsLeft}/${enemyShipsLeft}`;
+            updateAirstrikesCount();
         }
         
         function updateTurnIndicator() {
@@ -2042,7 +2593,7 @@
         // ==================== ЗАПУСК ====================
         
         window.addEventListener('DOMContentLoaded', () => {
-            console.log('Морской Бой загружен!');
+            console.log('Морской Бой с авиаударами загружен!');
             
             // Добавляем стили для анимаций
             const style = document.createElement('style');
@@ -2091,6 +2642,8 @@
         window.randomPlacement = randomPlacement;
         window.startBattle = startBattle;
         window.aiMakeMove = aiMakeMove;
+        window.useAirstrike = useAirstrike;
+        window.cancelAirstrike = cancelAirstrike;
         window.surrender = surrender;
         window.restartGame = restartGame;
     </script>

@@ -1,7 +1,7 @@
 {
-  "name": "sea-battle-ai",
-  "version": "3.0.0",
-  "description": "Морской бой с ИИ разных уровней сложности",
+  "name": "sea-battle-multiplayer",
+  "version": "2.0.0",
+  "description": "Морской бой с системой лобби для игры с друзьями",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -19,10 +19,10 @@
   },
   "keywords": [
     "battleship",
-    "ai",
+    "multiplayer",
+    "lobby",
     "game",
-    "javascript",
-    "multiplayer"
+    "websocket"
   ],
   "author": "Sea Battle Team",
   "license": "MIT"

@@ -12,288 +12,481 @@ const io = require('socket.io')(http, {
 app.use(express.static(__dirname));
 app.use(express.json());
 
-// Хранилище комнат для мультиплеера
-const rooms = new Map();
+// Хранилище лобби
+const lobbies = new Map();
+const players = new Map();
+
+// Генератор ID лобби
+function generateLobbyId() {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    let id = '';
+    for (let i = 0; i < 6; i++) {
+        id += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return id;
+}
 
 io.on('connection', (socket) => {
     console.log(`🔥 Новый игрок подключился: ${socket.id}`);
     
-    // Присоединение к комнате для мультиплеера
-    socket.on('joinCustomRoom', (data) => {
-        if (!data || !data.room || !data.pass) {
-            socket.emit('errorMsg', 'Введите ID комнаты и пароль');
+    // Добавляем игрока в список
+    players.set(socket.id, {
+        id: socket.id,
+        name: `Игрок_${socket.id.slice(0, 4)}`,
+        lobbyId: null,
+        ready: false
+    });
+    
+    // Создание лобби
+    socket.on('createLobby', (data) => {
+        const player = players.get(socket.id);
+        if (!player) return;
+        
+        const lobbyId = generateLobbyId();
+        const lobby = {
+            id: lobbyId,
+            name: data.name,
+            password: data.password,
+            maxPlayers: data.maxPlayers || 2,
+            isPrivate: data.isPrivate || false,
+            hostId: socket.id,
+            players: [{
+                id: socket.id,
+                name: data.playerName || player.name,
+                ready: false,
+                isHost: true
+            }],
+            gameStarted: false,
+            createdAt: Date.now(),
+            mode: 'classic'
+        };
+        
+        lobbies.set(lobbyId, lobby);
+        player.lobbyId = lobbyId;
+        player.name = data.playerName || player.name;
+        
+        socket.join(lobbyId);
+        socket.emit('lobbyCreated', lobby);
+        
+        console.log(`🎮 Лобби создано: ${lobbyId} (${lobby.name})`);
+        
+        // Отправляем обновленный список лобби всем
+        broadcastLobbyList();
+    });
+    
+    // Получение списка лобби
+    socket.on('getLobbies', () => {
+        const publicLobbies = Array.from(lobbies.values())
+            .filter(lobby => !lobby.isPrivate && !lobby.gameStarted)
+            .map(lobby => ({
+                id: lobby.id,
+                name: lobby.name,
+                players: lobby.players.length,
+                maxPlayers: lobby.maxPlayers,
+                hasPassword: !!lobby.password,
+                mode: lobby.mode
+            }));
+        
+        socket.emit('lobbyList', publicLobbies);
+    });
+    
+    // Присоединение к лобби
+    socket.on('joinLobby', (data) => {
+        const player = players.get(socket.id);
+        if (!player) return;
+        
+        const lobby = lobbies.get(data.lobbyId);
+        if (!lobby) {
+            socket.emit('lobbyError', 'Лобби не найдено');
             return;
         }
         
-        const { room, pass } = data;
-        const roomKey = room.trim().toLowerCase();
-
-        if (!rooms.has(roomKey)) {
-            // Создаем новую комнату
-            rooms.set(roomKey, {
-                password: pass,
-                players: [socket.id],
-                ready: [],
-                gameState: {
-                    started: false,
-                    turn: null,
-                    player1: socket.id,
-                    player2: null
-                }
-            });
-            
-            socket.join(roomKey);
-            socket.roomName = roomKey;
-            
-            socket.emit('waiting', 'Комната создана! Ждем второго игрока...');
-            socket.emit('playerNumber', 1);
-            
-        } else {
-            // Присоединяемся к существующей комнате
-            const currentRoom = rooms.get(roomKey);
-            
-            if (currentRoom.password !== pass) {
-                socket.emit('errorMsg', '❌ Неверный пароль!');
-                return;
-            }
-            
-            if (currentRoom.players.length >= 2) {
-                socket.emit('errorMsg', '❌ Комната уже заполнена!');
-                return;
-            }
-
-            // Добавляем второго игрока
-            currentRoom.players.push(socket.id);
-            currentRoom.gameState.player2 = socket.id;
-            
-            socket.join(roomKey);
-            socket.roomName = roomKey;
-            
-            // Уведомляем обоих игроков
-            socket.emit('playerNumber', 2);
-            socket.emit('waiting', '✅ Оба игрока в комнате! Расставляйте корабли.');
-            
-            socket.to(roomKey).emit('opponentJoined');
-            socket.to(roomKey).emit('waiting', '✅ Противник присоединился!');
+        if (lobby.password && lobby.password !== data.password) {
+            socket.emit('lobbyError', 'Неверный пароль');
+            return;
         }
-    });
-
-    // Игрок готов к игре
-    socket.on('playerReady', () => {
-        const roomName = socket.roomName;
-        if (!roomName || !rooms.has(roomName)) return;
-
-        const currentRoom = rooms.get(roomName);
         
-        if (!currentRoom.ready.includes(socket.id)) {
-            currentRoom.ready.push(socket.id);
+        if (lobby.players.length >= lobby.maxPlayers) {
+            socket.emit('lobbyError', 'Лобби заполнено');
+            return;
         }
-
-        console.log(`🎯 Игрок ${socket.id} готов в комнате "${roomName}"`);
-
-        // Если оба игрока готовы, начинаем игру
-        if (currentRoom.players.length === 2 && 
-            currentRoom.ready.length === 2 &&
-            !currentRoom.gameState.started) {
-            
-            // Выбираем случайного игрока для первого хода
-            const firstPlayerIndex = Math.random() < 0.5 ? 0 : 1;
-            const firstPlayerId = currentRoom.players[firstPlayerIndex];
-            const secondPlayerId = currentRoom.players[1 - firstPlayerIndex];
-            
-            currentRoom.gameState.turn = firstPlayerId;
-            currentRoom.gameState.started = true;
-            
-            console.log(`🚀 Игра началась в комнате "${roomName}"`);
-            
-            // Отправляем игрокам информацию о начале игры
-            io.to(firstPlayerId).emit('gameStart', { 
-                canMove: true,
-                message: '🎯 ВАШ ХОД! Атакуйте поле противника!'
-            });
-            
-            io.to(secondPlayerId).emit('gameStart', { 
-                canMove: false,
-                message: '⏳ ХОД ПРОТИВНИКА...'
-            });
-        } else {
-            // Уведомляем о готовности
-            io.to(roomName).emit('waiting', 
-                `Ожидание готовности... (${currentRoom.ready.length}/2 игроков готово)`);
+        
+        if (lobby.gameStarted) {
+            socket.emit('lobbyError', 'Игра уже началась');
+            return;
         }
+        
+        // Проверяем, не находится ли игрок уже в другом лобби
+        if (player.lobbyId && player.lobbyId !== data.lobbyId) {
+            leaveLobby(socket);
+        }
+        
+        player.lobbyId = data.lobbyId;
+        player.name = data.playerName || player.name;
+        player.ready = false;
+        
+        // Добавляем игрока в лобби
+        lobby.players.push({
+            id: socket.id,
+            name: player.name,
+            ready: false,
+            isHost: false
+        });
+        
+        socket.join(data.lobbyId);
+        socket.emit('lobbyJoined', lobby);
+        
+        // Уведомляем других игроков в лобби
+        socket.to(data.lobbyId).emit('playerJoined', {
+            id: socket.id,
+            name: player.name
+        });
+        
+        console.log(`👤 Игрок ${player.name} присоединился к лобби ${lobby.id}`);
+        
+        // Обновляем список лобби
+        broadcastLobbyList();
     });
-
-    // Обычный ход в мультиплеере
+    
+    // Выход из лобби
+    socket.on('leaveLobby', () => {
+        leaveLobby(socket);
+    });
+    
+    // Установка статуса готовности
+    socket.on('setReady', (isReady) => {
+        const player = players.get(socket.id);
+        if (!player || !player.lobbyId) return;
+        
+        const lobby = lobbies.get(player.lobbyId);
+        if (!lobby) return;
+        
+        // Обновляем статус игрока
+        const playerInLobby = lobby.players.find(p => p.id === socket.id);
+        if (playerInLobby) {
+            playerInLobby.ready = isReady;
+            player.ready = isReady;
+        }
+        
+        // Уведомляем всех в лобби
+        io.to(lobby.id).emit('playerReady', {
+            playerId: socket.id,
+            playerName: player.name,
+            ready: isReady
+        });
+        
+        console.log(`✅ Игрок ${player.name} ${isReady ? 'готов' : 'не готов'}`);
+    });
+    
+    // Начало игры
+    socket.on('startGame', () => {
+        const player = players.get(socket.id);
+        if (!player || !player.lobbyId) return;
+        
+        const lobby = lobbies.get(player.lobbyId);
+        if (!lobby) return;
+        
+        // Проверяем, что игрок - хост
+        if (lobby.hostId !== socket.id) {
+            socket.emit('lobbyError', 'Только хост может начать игру');
+            return;
+        }
+        
+        // Проверяем, что все игроки готовы
+        const allReady = lobby.players.every(p => p.ready);
+        if (!allReady) {
+            socket.emit('lobbyError', 'Не все игроки готовы');
+            return;
+        }
+        
+        // Проверяем минимальное количество игроков
+        if (lobby.players.length < 2) {
+            socket.emit('lobbyError', 'Недостаточно игроков');
+            return;
+        }
+        
+        lobby.gameStarted = true;
+        
+        // Определяем, кто ходит первым (случайно)
+        const firstPlayerIndex = Math.floor(Math.random() * lobby.players.length);
+        const firstPlayerId = lobby.players[firstPlayerIndex].id;
+        
+        // Отправляем игрокам информацию о начале игры
+        lobby.players.forEach(player => {
+            const playerSocket = io.sockets.sockets.get(player.id);
+            if (playerSocket) {
+                playerSocket.emit('gameStart', {
+                    canMove: player.id === firstPlayerId,
+                    opponent: lobby.players.find(p => p.id !== player.id)?.name || 'Противник',
+                    lobbyId: lobby.id
+                });
+            }
+        });
+        
+        console.log(`🚀 Игра началась в лобби ${lobby.id}`);
+        
+        // Обновляем список лобби
+        broadcastLobbyList();
+    });
+    
+    // Ход в игре
     socket.on('makeMove', (data) => {
-        const roomName = socket.roomName;
-        if (!roomName || !rooms.has(roomName)) return;
+        const player = players.get(socket.id);
+        if (!player || !player.lobbyId) return;
         
-        const currentRoom = rooms.get(roomName);
+        const lobby = lobbies.get(player.lobbyId);
+        if (!lobby || !lobby.gameStarted) return;
         
-        // Проверяем, ход ли игрока
-        if (currentRoom.gameState.turn !== socket.id) {
-            socket.emit('errorMsg', 'Сейчас не ваш ход!');
-            return;
+        // Пересылаем ход противнику
+        const opponent = lobby.players.find(p => p.id !== socket.id);
+        if (opponent) {
+            socket.to(lobby.id).emit('enemyMove', {
+                index: data.index,
+                playerId: socket.id,
+                playerName: player.name
+            });
         }
         
-        // Передаем ход противнику
-        socket.to(roomName).emit('enemyMove', {
-            index: data.index,
-            playerId: socket.id
+        console.log(`🎯 Игрок ${player.name} сделал ход в клетку ${data.index}`);
+    });
+    
+    // Результат выстрела
+    socket.on('shotResult', (data) => {
+        const player = players.get(socket.id);
+        if (!player || !player.lobbyId) return;
+        
+        const lobby = lobbies.get(player.lobbyId);
+        if (!lobby) return;
+        
+        // Пересылаем результат стрелявшему
+        const opponent = lobby.players.find(p => p.id !== socket.id);
+        if (opponent) {
+            socket.to(lobby.id).emit('shotResult', data);
+        }
+    });
+    
+    // Сообщение в лобби
+    socket.on('lobbyMessage', (text) => {
+        const player = players.get(socket.id);
+        if (!player || !player.lobbyId) return;
+        
+        const lobby = lobbies.get(player.lobbyId);
+        if (!lobby) return;
+        
+        io.to(lobby.id).emit('lobbyMessage', {
+            sender: player.name,
+            text: text
         });
     });
-
-    // Результат выстрела в мультиплеере
-    socket.on('shotResult', (data) => {
-        const roomName = socket.roomName;
-        if (!roomName || !rooms.has(roomName)) return;
+    
+    // Сообщение в игре
+    socket.on('gameMessage', (text) => {
+        const player = players.get(socket.id);
+        if (!player || !player.lobbyId) return;
         
-        const currentRoom = rooms.get(roomName);
-        const opponentId = currentRoom.players.find(id => id !== socket.id);
+        const lobby = lobbies.get(player.lobbyId);
+        if (!lobby) return;
         
-        if (!opponentId) return;
-        
-        // Если попали, но не убили - ход остается у стрелявшего
-        if (data.hit && !data.killed) {
-            currentRoom.gameState.turn = opponentId;
-            
-            io.to(opponentId).emit('updateResult', {
-                index: data.index,
-                hit: true,
-                killed: false,
-                canMove: true
-            });
-            
-        } else if (data.hit && data.killed) {
-            // Убил корабль - ход тоже остается
-            currentRoom.gameState.turn = opponentId;
-            
-            io.to(opponentId).emit('updateResult', {
-                index: data.index,
-                hit: true,
-                killed: true,
-                coords: data.coords,
-                canMove: true
-            });
-            
-        } else {
-            // Промах - ход переходит
-            currentRoom.gameState.turn = socket.id;
-            
-            io.to(opponentId).emit('updateResult', {
-                index: data.index,
-                hit: false,
-                killed: false,
-                canMove: false
-            });
-        }
+        io.to(lobby.id).emit('gameMessage', {
+            sender: player.name,
+            text: text
+        });
     });
-
-    // Игрок победил в мультиплеере
-    socket.on('gameWon', () => {
-        const roomName = socket.roomName;
-        if (!roomName || !rooms.has(roomName)) return;
+    
+    // Завершение игры
+    socket.on('gameOver', () => {
+        const player = players.get(socket.id);
+        if (!player || !player.lobbyId) return;
         
-        const currentRoom = rooms.get(roomName);
-        const opponentId = currentRoom.players.find(id => id !== socket.id);
+        const lobby = lobbies.get(player.lobbyId);
+        if (!lobby) return;
         
-        if (opponentId) {
-            io.to(opponentId).emit('gameLost');
-        }
+        // Определяем победителя (тот, кто не сдался)
+        const winner = lobby.players.find(p => p.id !== socket.id);
         
-        io.to(roomName).emit('gameOver', { winner: socket.id });
+        io.to(lobby.id).emit('gameOver', {
+            winner: winner?.id || null,
+            reason: 'сдался'
+        });
         
-        // Удаляем комнату через 30 секунд
+        // Закрываем лобби после игры
         setTimeout(() => {
-            if (rooms.has(roomName)) {
-                rooms.delete(roomName);
+            if (lobbies.has(lobby.id)) {
+                lobbies.delete(lobby.id);
+                broadcastLobbyList();
+                console.log(`🗑️ Лобби ${lobby.id} удалено после игры`);
             }
         }, 30000);
     });
-
+    
+    // Выход из игры
+    socket.on('leaveGame', () => {
+        const player = players.get(socket.id);
+        if (!player || !player.lobbyId) return;
+        
+        const lobby = lobbies.get(player.lobbyId);
+        if (!lobby) return;
+        
+        // Уведомляем противника
+        const opponent = lobby.players.find(p => p.id !== socket.id);
+        if (opponent) {
+            io.to(opponent.id).emit('playerLeft', {
+                id: socket.id,
+                name: player.name,
+                reason: 'покинул игру'
+            });
+        }
+        
+        // Удаляем лобби
+        lobbies.delete(lobby.id);
+        broadcastLobbyList();
+        
+        console.log(`👋 Игрок ${player.name} покинул игру в лобби ${lobby.id}`);
+    });
+    
     // Отключение игрока
     socket.on('disconnect', () => {
-        const roomName = socket.roomName;
-        if (roomName && rooms.has(roomName)) {
-            const currentRoom = rooms.get(roomName);
-            
-            // Удаляем игрока из комнаты
-            currentRoom.players = currentRoom.players.filter(id => id !== socket.id);
-            currentRoom.ready = currentRoom.ready.filter(id => id !== socket.id);
-            
-            if (currentRoom.players.length === 0) {
-                // Комната пуста - удаляем
-                rooms.delete(roomName);
-            } else {
-                // Уведомляем оставшегося игрока
-                io.to(currentRoom.players[0]).emit('enemyDisconnected');
-                
-                // Удаляем комнату через 30 секунд
-                setTimeout(() => {
-                    if (rooms.has(roomName)) {
-                        rooms.delete(roomName);
-                    }
-                }, 30000);
+        console.log(`👋 Игрок отключился: ${socket.id}`);
+        leaveLobby(socket);
+        players.delete(socket.id);
+    });
+    
+    // Вспомогательные функции
+    function leaveLobby(socket) {
+        const player = players.get(socket.id);
+        if (!player || !player.lobbyId) return;
+        
+        const lobby = lobbies.get(player.lobbyId);
+        if (!lobby) return;
+        
+        // Удаляем игрока из лобби
+        lobby.players = lobby.players.filter(p => p.id !== socket.id);
+        
+        // Уведомляем других игроков
+        socket.to(lobby.id).emit('playerLeft', {
+            id: socket.id,
+            name: player.name,
+            reason: 'покинул лобби'
+        });
+        
+        // Если лобби пустое, удаляем его
+        if (lobby.players.length === 0) {
+            lobbies.delete(lobby.id);
+            console.log(`🗑️ Лобби ${lobby.id} удалено (пустое)`);
+        } else {
+            // Если вышел хост, назначаем нового
+            if (lobby.hostId === socket.id) {
+                lobby.hostId = lobby.players[0].id;
+                lobby.players[0].isHost = true;
             }
         }
-    });
+        
+        player.lobbyId = null;
+        player.ready = false;
+        
+        socket.leave(lobby.id);
+        
+        // Обновляем список лобби
+        broadcastLobbyList();
+        
+        console.log(`👤 Игрок ${player.name} покинул лобби ${lobby.id}`);
+    }
+    
+    function broadcastLobbyList() {
+        const publicLobbies = Array.from(lobbies.values())
+            .filter(lobby => !lobby.isPrivate && !lobby.gameStarted)
+            .map(lobby => ({
+                id: lobby.id,
+                name: lobby.name,
+                players: lobby.players.length,
+                maxPlayers: lobby.maxPlayers,
+                hasPassword: !!lobby.password,
+                mode: lobby.mode
+            }));
+        
+        io.emit('lobbyList', publicLobbies);
+    }
 });
 
-// Маршруты
+// Маршруты API
 app.get('/', (req, res) => {
     res.sendFile(__dirname + '/index.html');
 });
 
-app.get('/status', (req, res) => {
-    const activeRooms = Array.from(rooms.entries()).map(([name, room]) => ({
-        name,
-        players: room.players.length,
-        started: room.gameState.started
-    }));
+app.get('/api/lobbies', (req, res) => {
+    const publicLobbies = Array.from(lobbies.values())
+        .filter(lobby => !lobby.isPrivate && !lobby.gameStarted)
+        .map(lobby => ({
+            id: lobby.id,
+            name: lobby.name,
+            players: lobby.players.length,
+            maxPlayers: lobby.maxPlayers,
+            hasPassword: !!lobby.password,
+            mode: lobby.mode,
+            createdAt: lobby.createdAt
+        }));
     
     res.json({
-        status: 'online',
-        server: 'Sea Battle AI',
-        version: '3.0.0',
-        uptime: process.uptime(),
-        players: io.engine.clientsCount,
-        rooms: rooms.size,
-        activeRooms: activeRooms
+        status: 'success',
+        count: publicLobbies.length,
+        lobbies: publicLobbies
     });
 });
 
-app.get('/stats', (req, res) => {
-    // Примерная статистика сервера
-    const stats = {
-        totalGames: 0,
-        aiWins: 0,
-        playerWins: 0,
-        averageMoves: 0
-    };
-    
-    res.json(stats);
+app.get('/api/stats', (req, res) => {
+    res.json({
+        status: 'online',
+        players: players.size,
+        lobbies: lobbies.size,
+        activeGames: Array.from(lobbies.values()).filter(l => l.gameStarted).length,
+        uptime: process.uptime()
+    });
 });
 
-// Для Render важно слушать правильный порт
+app.get('/api/lobby/:id', (req, res) => {
+    const lobby = lobbies.get(req.params.id);
+    if (!lobby) {
+        return res.status(404).json({ error: 'Лобби не найдено' });
+    }
+    
+    res.json({
+        id: lobby.id,
+        name: lobby.name,
+        players: lobby.players.map(p => ({
+            name: p.name,
+            ready: p.ready,
+            isHost: p.isHost
+        })),
+        maxPlayers: lobby.maxPlayers,
+        gameStarted: lobby.gameStarted,
+        createdAt: lobby.createdAt
+    });
+});
+
+// Для Render
 const PORT = process.env.PORT || 3000;
 http.listen(PORT, '0.0.0.0', () => {
     console.log(`
     ╔═══════════════════════════════════════╗
-    ║      МОРСКОЙ БОЙ С ИИ v3.0           ║
-    ║        Уровни сложности              ║
+    ║     МОРСКОЙ БОЙ - МУЛЬТИПЛЕЕР        ║
+    ║         Система лобби v2.0           ║
     ╚═══════════════════════════════════════╝
     
     🚀 Сервер запущен на порту: ${PORT}
     🌐 WebSocket сервер готов
     📡 Ожидаем подключений...
     
-    ✅ Статус: http://localhost:${PORT}/status
+    ✅ Статус: http://localhost:${PORT}/api/stats
+    📋 Лобби: http://localhost:${PORT}/api/lobbies
     🎮 Игра: http://localhost:${PORT}/
     
-    Уровни ИИ:
-    🟢 Легкий   - случайные ходы
-    🟡 Средний  - базовая стратегия
-    🔴 Сложный  - продвинутый алгоритм
+    Функции:
+    • Создание лобби с паролем
+    • Публичный список лобби
+    • Прямое подключение по ID
+    • Чат в лобби и в игре
+    • Голосование готовности
+    • Автоматический старт игры
     `);
 });
 

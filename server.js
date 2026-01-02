@@ -14,6 +14,13 @@ app.use(express.static(__dirname));
 const lobbies = new Map();
 const players = new Map();
 
+// Конфигурация авиаударов
+const AIRSTRIKES_CONFIG = {
+    strike: { name: 'Штурмовики', count: 2, description: 'Линия 1x5 клеток' },
+    bomb: { name: 'Бомбардировщики', count: 2, description: 'Квадрат 2x2 клетки' },
+    recon: { name: 'Разведка', count: 1, description: 'Область 3x3 (без урона)' }
+};
+
 // Генератор ID лобби
 function generateLobbyId() {
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -22,6 +29,64 @@ function generateLobbyId() {
         id += chars.charAt(Math.floor(Math.random() * chars.length));
     }
     return id;
+}
+
+// Функции для работы с авиаударами
+function getStrikeCells(centerIndex) {
+    const row = Math.floor(centerIndex / 10);
+    const col = centerIndex % 10;
+    const cells = [];
+    
+    if (col < 2 || col > 7) return [];
+    
+    for (let i = -2; i <= 2; i++) {
+        cells.push(row * 10 + (col + i));
+    }
+    
+    return cells;
+}
+
+function getBombCells(topLeftIndex) {
+    const row = Math.floor(topLeftIndex / 10);
+    const col = topLeftIndex % 10;
+    const cells = [];
+    
+    if (row > 8 || col > 8) return [];
+    
+    for (let dr = 0; dr < 2; dr++) {
+        for (let dc = 0; dc < 2; dc++) {
+            cells.push((row + dr) * 10 + (col + dc));
+        }
+    }
+    
+    return cells;
+}
+
+function getReconCells(centerIndex) {
+    const row = Math.floor(centerIndex / 10);
+    const col = centerIndex % 10;
+    const cells = [];
+    
+    for (let dr = -1; dr <= 1; dr++) {
+        for (let dc = -1; dc <= 1; dc++) {
+            const newRow = row + dr;
+            const newCol = col + dc;
+            if (newRow >= 0 && newRow < 10 && newCol >= 0 && newCol < 10) {
+                cells.push(newRow * 10 + newCol);
+            }
+        }
+    }
+    
+    return cells;
+}
+
+// Инициализация авиаударов для игрока
+function initializeAirstrikes() {
+    return {
+        strike: AIRSTRIKES_CONFIG.strike.count,
+        bomb: AIRSTRIKES_CONFIG.bomb.count,
+        recon: AIRSTRIKES_CONFIG.recon.count
+    };
 }
 
 io.on('connection', (socket) => {
@@ -44,7 +109,8 @@ io.on('connection', (socket) => {
                     name: data.playerName || `Игрок_${socket.id.slice(0, 4)}`,
                     ready: false,
                     shipsReady: false,
-                    isHost: true
+                    isHost: true,
+                    airstrikes: initializeAirstrikes()
                 }],
                 gameStarted: false,
                 currentTurn: null,
@@ -59,7 +125,8 @@ io.on('connection', (socket) => {
                 name: data.playerName || `Игрок_${socket.id.slice(0, 4)}`,
                 lobbyId: lobbyId,
                 ready: false,
-                shipsReady: false
+                shipsReady: false,
+                airstrikes: initializeAirstrikes()
             });
             
             socket.join(lobbyId);
@@ -125,7 +192,8 @@ io.on('connection', (socket) => {
             name: playerName,
             ready: false,
             shipsReady: false,
-            isHost: false
+            isHost: false,
+            airstrikes: initializeAirstrikes()
         });
         
         // Сохраняем информацию об игроке
@@ -134,7 +202,8 @@ io.on('connection', (socket) => {
             name: playerName,
             lobbyId: data.lobbyId,
             ready: false,
-            shipsReady: false
+            shipsReady: false,
+            airstrikes: initializeAirstrikes()
         });
         
         socket.join(data.lobbyId);
@@ -235,6 +304,17 @@ io.on('connection', (socket) => {
         if (allShipsReady) {
             console.log(`🚀 Все игроки готовы к битве в лобби ${lobby.id}`);
             
+            // Отправляем информацию об авиаударах
+            lobby.players.forEach(player => {
+                const playerSocket = io.sockets.sockets.get(player.id);
+                if (playerSocket) {
+                    playerSocket.emit('airstrikesInfo', {
+                        airstrikes: player.airstrikes,
+                        config: AIRSTRIKES_CONFIG
+                    });
+                }
+            });
+            
             // Отправляем обновление хода
             io.to(lobby.id).emit('turnUpdate', {
                 currentTurn: lobby.currentTurn
@@ -266,6 +346,102 @@ io.on('connection', (socket) => {
                 playerId: socket.id
             });
         }
+    });
+    
+    // Авиаудар в игре
+    socket.on('airstrike', (data) => {
+        const player = players.get(socket.id);
+        if (!player || !player.lobbyId) return;
+        
+        const lobby = lobbies.get(player.lobbyId);
+        if (!lobby || !lobby.gameStarted) return;
+        
+        // Проверяем, ход ли игрока
+        if (lobby.currentTurn !== socket.id) {
+            socket.emit('lobbyError', 'Сейчас не ваш ход!');
+            return;
+        }
+        
+        // Проверяем тип авиаудара
+        const validTypes = ['strike', 'bomb', 'recon'];
+        if (!validTypes.includes(data.type)) {
+            socket.emit('lobbyError', 'Неверный тип авиаудара');
+            return;
+        }
+        
+        // Проверяем, есть ли еще доступные авиаудары этого типа
+        if (player.airstrikes[data.type] <= 0) {
+            socket.emit('lobbyError', 'Авиаудары этого типа закончились');
+            return;
+        }
+        
+        // Используем авиаудар
+        player.airstrikes[data.type]--;
+        
+        // Обновляем авиаудары в лобби
+        const playerInLobby = lobby.players.find(p => p.id === socket.id);
+        if (playerInLobby) {
+            playerInLobby.airstrikes[data.type]--;
+        }
+        
+        console.log(`✈️ Авиаудар от ${player.name}: тип ${data.type}, клетка ${data.index}`);
+        
+        // Передаем ход противнику
+        const opponent = lobby.players.find(p => p.id !== socket.id);
+        if (opponent) {
+            lobby.currentTurn = opponent.id;
+            
+            // Отправляем информацию об авиаударе противнику
+            socket.to(lobby.id).emit('enemyAirstrike', {
+                type: data.type,
+                index: data.index,
+                playerId: socket.id
+            });
+        }
+        
+        // Отправляем обновление хода
+        io.to(lobby.id).emit('turnUpdate', {
+            currentTurn: lobby.currentTurn
+        });
+        
+        // Отправляем обновленную информацию об авиаударах
+        socket.emit('airstrikesInfo', {
+            airstrikes: player.airstrikes,
+            config: AIRSTRIKES_CONFIG
+        });
+        
+        // Отправляем противнику информацию об использовании авиаудара
+        if (opponent) {
+            const opponentSocket = io.sockets.sockets.get(opponent.id);
+            if (opponentSocket) {
+                opponentSocket.emit('enemyUsedAirstrike', {
+                    type: data.type,
+                    playerName: player.name
+                });
+            }
+        }
+    });
+    
+    // Результат авиаудара
+    socket.on('airstrikeResult', (data) => {
+        const player = players.get(socket.id);
+        if (!player || !player.lobbyId) return;
+        
+        const lobby = lobbies.get(player.lobbyId);
+        if (!lobby) return;
+        
+        const opponent = lobby.players.find(p => p.id !== socket.id);
+        if (!opponent) return;
+        
+        console.log(`🎯 Результат авиаудара от ${player.name}:`, data);
+        
+        // Отправляем результат противнику
+        socket.to(lobby.id).emit('enemyAirstrikeResult', {
+            type: data.type,
+            cells: data.cells,
+            hits: data.hits,
+            killedShips: data.killedShips || []
+        });
     });
     
     // Результат выстрела
@@ -453,6 +629,12 @@ io.on('connection', (socket) => {
                     playerNumber: index + 1,
                     opponentName: lobby.players.find(p => p.id !== player.id)?.name || 'Противник'
                 });
+                
+                // Отправляем информацию об авиаударах
+                playerSocket.emit('airstrikesInfo', {
+                    airstrikes: player.airstrikes,
+                    config: AIRSTRIKES_CONFIG
+                });
             }
         });
         
@@ -527,12 +709,13 @@ app.get('/status', (req, res) => {
 const PORT = process.env.PORT || 3000;
 http.listen(PORT, '0.0.0.0', () => {
     console.log(`
-    ╔═══════════════════════════════════════╗
-    ║     МОРСКОЙ БОЙ - ПОЛНАЯ ВЕРСИЯ     ║
-    ╚═══════════════════════════════════════╝
+    ╔══════════════════════════════════════════╗
+    ║     МОРСКОЙ БОЙ С АВИАУДАРАМИ          ║
+    ╚══════════════════════════════════════════╝
     
     🚀 Сервер запущен на порту: ${PORT}
     🌐 WebSocket сервер готов
+    ✈️  Авиаудары: Штурмовики (2), Бомбардировщики (2), Разведка (1)
     📡 Ожидаем подключений...
     `);
 });

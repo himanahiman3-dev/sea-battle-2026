@@ -4,14 +4,11 @@ const http = require('http').createServer(app);
 const io = require('socket.io')(http, {
     cors: {
         origin: "*",
-        methods: ["GET", "POST"],
-        credentials: true
-    },
-    transports: ['websocket', 'polling']
+        methods: ["GET", "POST"]
+    }
 });
 
 app.use(express.static(__dirname));
-app.use(express.json());
 
 // Хранилище данных
 const lobbies = new Map();
@@ -19,15 +16,20 @@ const players = new Map();
 
 // Генератор ID лобби
 function generateLobbyId() {
-    return Math.random().toString(36).substring(2, 8).toUpperCase();
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    let id = '';
+    for (let i = 0; i < 6; i++) {
+        id += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return id;
 }
 
 io.on('connection', (socket) => {
     console.log(`✅ Новое подключение: ${socket.id}`);
     
-    // Создание лобби - ИСПРАВЛЕНО
+    // Создание лобби
     socket.on('createLobby', (data) => {
-        console.log(`🎮 Запрос на создание лобби от ${socket.id}:`, data);
+        console.log(`🎮 Создание лобби от ${socket.id}:`, data);
         
         try {
             const lobbyId = generateLobbyId();
@@ -41,11 +43,9 @@ io.on('connection', (socket) => {
                     id: socket.id,
                     name: data.playerName || `Игрок_${socket.id.slice(0, 4)}`,
                     ready: false,
-                    shipsPlaced: false,
                     isHost: true
                 }],
                 gameStarted: false,
-                placementsReady: 0,
                 createdAt: Date.now()
             };
             
@@ -66,7 +66,7 @@ io.on('connection', (socket) => {
             // Отправляем подтверждение создателю
             socket.emit('lobbyCreated', lobby);
             
-            // Отправляем обновленный список лобби всем
+            // Рассылаем обновленный список лобби
             broadcastLobbyList();
             
         } catch (error) {
@@ -75,7 +75,7 @@ io.on('connection', (socket) => {
         }
     });
     
-    // Получение списка лобби - ИСПРАВЛЕНО
+    // Получение списка лобби
     socket.on('getLobbies', () => {
         const publicLobbies = Array.from(lobbies.values())
             .filter(lobby => !lobby.password && !lobby.gameStarted && lobby.players.length < lobby.maxPlayers)
@@ -87,13 +87,12 @@ io.on('connection', (socket) => {
                 hasPassword: !!lobby.password
             }));
         
-        console.log(`📋 Отправка списка лобби (${publicLobbies.length} доступно)`);
         socket.emit('lobbyList', publicLobbies);
     });
     
-    // Присоединение к лобби - ИСПРАВЛЕНО
+    // Присоединение к лобби
     socket.on('joinLobby', (data) => {
-        console.log(`👥 Запрос на присоединение к лобби ${data.lobbyId} от ${socket.id}`);
+        console.log(`👥 Присоединение к лобби ${data.lobbyId} от ${socket.id}`);
         
         const lobby = lobbies.get(data.lobbyId);
         if (!lobby) {
@@ -122,7 +121,6 @@ io.on('connection', (socket) => {
             id: socket.id,
             name: playerName,
             ready: false,
-            shipsPlaced: false,
             isHost: false
         });
         
@@ -138,51 +136,51 @@ io.on('connection', (socket) => {
         
         console.log(`✅ Игрок ${playerName} присоединился к лобби ${lobby.id}`);
         
-        // Уведомляем всех в лобби
+        // Уведомляем всех в лобби о новом игроке
         io.to(data.lobbyId).emit('playerJoined', {
             id: socket.id,
-            name: playerName,
-            players: lobby.players
+            name: playerName
         });
         
         // Отправляем обновленное лобби присоединившемуся игроку
         socket.emit('lobbyJoined', lobby);
         
+        // Рассылаем обновленный список лобби
         broadcastLobbyList();
     });
     
-    // Игрок готов (расставил корабли) - НОВАЯ ФУНКЦИЯ
-    socket.on('playerReady', () => {
+    // Установка статуса готовности
+    socket.on('setReady', (isReady) => {
         const player = players.get(socket.id);
         if (!player || !player.lobbyId) return;
         
         const lobby = lobbies.get(player.lobbyId);
         if (!lobby) return;
         
-        // Находим игрока в лобби
+        // Обновляем статус игрока
         const playerInLobby = lobby.players.find(p => p.id === socket.id);
         if (playerInLobby) {
-            playerInLobby.ready = true;
-            player.ready = true;
-            
-            console.log(`✅ Игрок ${player.name} готов к игре`);
-            
-            // Уведомляем всех в лобби
-            io.to(lobby.id).emit('playerReady', {
-                playerId: socket.id,
-                playerName: player.name,
-                ready: true
-            });
-            
-            // Проверяем, все ли игроки готовы
+            playerInLobby.ready = isReady;
+            player.ready = isReady;
+        }
+        
+        console.log(`✅ Игрок ${player.name} ${isReady ? 'готов' : 'не готов'}`);
+        
+        // Уведомляем всех в лобби
+        io.to(lobby.id).emit('playerReady', {
+            playerId: socket.id,
+            playerName: player.name,
+            ready: isReady
+        });
+        
+        // Проверяем, все ли игроки готовы
+        if (lobby.players.length === lobby.maxPlayers) {
             const allReady = lobby.players.every(p => p.ready);
-            const allPlayers = lobby.players.length === lobby.maxPlayers;
-            
-            if (allReady && allPlayers) {
+            if (allReady) {
                 console.log(`🚀 Все игроки готовы в лобби ${lobby.id}`);
                 
                 // Определяем, кто ходит первым
-                const firstPlayerIndex = Math.random() < 0.5 ? 0 : 1;
+                const firstPlayerIndex = Math.floor(Math.random() * lobby.players.length);
                 const firstPlayerId = lobby.players[firstPlayerIndex].id;
                 
                 lobby.gameStarted = true;
@@ -204,6 +202,17 @@ io.on('connection', (socket) => {
         }
     });
     
+    // Игрок готов (расставил корабли и нажал "Начать битву")
+    socket.on('playerReady', () => {
+        // Эта функция уже есть выше, но под другим названием
+        // Мы используем setReady для готовности в лобби
+        // А здесь можно обработать готовность в игре
+        const player = players.get(socket.id);
+        if (!player || !player.lobbyId) return;
+        
+        console.log(`⚔️ Игрок ${player.name} готов к битве`);
+    });
+    
     // Ход в игре
     socket.on('makeMove', (data) => {
         const player = players.get(socket.id);
@@ -211,6 +220,8 @@ io.on('connection', (socket) => {
         
         const lobby = lobbies.get(player.lobbyId);
         if (!lobby || !lobby.gameStarted) return;
+        
+        console.log(`🎯 Ход от ${player.name} в клетку ${data.index}`);
         
         // Пересылаем ход противнику
         const opponent = lobby.players.find(p => p.id !== socket.id);
@@ -230,6 +241,8 @@ io.on('connection', (socket) => {
         const lobby = lobbies.get(player.lobbyId);
         if (!lobby) return;
         
+        console.log(`🎯 Результат выстрела от ${player.name}:`, data);
+        
         // Пересылаем результат стрелявшему
         const opponent = lobby.players.find(p => p.id !== socket.id);
         if (opponent) {
@@ -237,18 +250,82 @@ io.on('connection', (socket) => {
         }
     });
     
-    // Сообщение в лобби
-    socket.on('lobbyMessage', (text) => {
+    // Завершение игры
+    socket.on('gameOver', (data) => {
         const player = players.get(socket.id);
         if (!player || !player.lobbyId) return;
         
         const lobby = lobbies.get(player.lobbyId);
         if (!lobby) return;
         
-        io.to(lobby.id).emit('lobbyMessage', {
-            sender: player.name,
-            text: text
+        console.log(`🏁 Игра окончена в лобби ${lobby.id}`);
+        
+        // Определяем победителя
+        const winner = data.winner ? socket.id : lobby.players.find(p => p.id !== socket.id)?.id;
+        
+        io.to(lobby.id).emit('gameOver', {
+            winner: winner,
+            reason: 'игра завершена'
         });
+        
+        // Закрываем лобби через 30 секунд
+        setTimeout(() => {
+            if (lobbies.has(lobby.id)) {
+                lobbies.delete(lobby.id);
+                broadcastLobbyList();
+                console.log(`🗑️ Лобби ${lobby.id} удалено после игры`);
+            }
+        }, 30000);
+    });
+    
+    // Выход из лобби
+    socket.on('leaveLobby', () => {
+        const player = players.get(socket.id);
+        if (!player || !player.lobbyId) return;
+        
+        const lobby = lobbies.get(player.lobbyId);
+        if (!lobby) return;
+        
+        // Удаляем игрока из лобби
+        lobby.players = lobby.players.filter(p => p.id !== socket.id);
+        
+        // Уведомляем других игроков
+        socket.to(lobby.id).emit('playerLeft', {
+            id: socket.id,
+            name: player.name,
+            reason: 'покинул лобби'
+        });
+        
+        // Если лобби пустое, удаляем его
+        if (lobby.players.length === 0) {
+            lobbies.delete(lobby.id);
+            console.log(`🗑️ Лобби ${lobby.id} удалено (пустое)`);
+        }
+        
+        player.lobbyId = null;
+        player.ready = false;
+        
+        socket.leave(lobby.id);
+        
+        // Рассылаем обновленный список лобби
+        broadcastLobbyList();
+        
+        console.log(`👤 Игрок ${player.name} покинул лобби ${lobby.id}`);
+    });
+    
+    // Выход из игры
+    socket.on('leaveGame', () => {
+        const player = players.get(socket.id);
+        if (!player || !player.lobbyId) return;
+        
+        const lobby = lobbies.get(player.lobbyId);
+        if (!lobby) return;
+        
+        // Удаляем лобби
+        lobbies.delete(lobby.id);
+        broadcastLobbyList();
+        
+        console.log(`👋 Игрок ${player.name} покинул игру в лобби ${lobby.id}`);
     });
     
     // Отключение игрока
@@ -270,7 +347,8 @@ io.on('connection', (socket) => {
                     // Уведомляем оставшихся игроков
                     io.to(lobby.id).emit('playerLeft', {
                         id: socket.id,
-                        name: player.name
+                        name: player.name,
+                        reason: 'отключился'
                     });
                 }
                 
@@ -307,6 +385,7 @@ app.get('/status', (req, res) => {
         status: 'online',
         players: Array.from(players.keys()).length,
         lobbies: lobbies.size,
+        activeGames: Array.from(lobbies.values()).filter(l => l.gameStarted).length,
         uptime: process.uptime()
     });
 });
@@ -315,7 +394,7 @@ const PORT = process.env.PORT || 3000;
 http.listen(PORT, '0.0.0.0', () => {
     console.log(`
     ╔═══════════════════════════════════════╗
-    ║     МОРСКОЙ БОЙ - ЛОББИ v2.1         ║
+    ║     МОРСКОЙ БОЙ - ПОЛНАЯ ВЕРСИЯ     ║
     ╚═══════════════════════════════════════╝
     
     🚀 Сервер запущен на порту: ${PORT}

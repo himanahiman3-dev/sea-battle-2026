@@ -1,7 +1,7 @@
 {
-  "name": "sea-battle-multiplayer",
-  "version": "2.0.0",
-  "description": "Морской бой с системой лобби для игры с друзьями",
+  "name": "sea-battle-full",
+  "version": "3.0.0",
+  "description": "Морской бой с ИИ и мультиплеером",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -11,18 +11,14 @@
     "express": "^4.18.2",
     "socket.io": "^4.7.2"
   },
-  "devDependencies": {
-    "nodemon": "^3.0.1"
-  },
   "engines": {
     "node": ">=16.0.0"
   },
   "keywords": [
     "battleship",
     "multiplayer",
-    "lobby",
-    "game",
-    "websocket"
+    "ai",
+    "game"
   ],
   "author": "Sea Battle Team",
   "license": "MIT"

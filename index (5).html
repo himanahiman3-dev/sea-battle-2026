@@ -1,0 +1,586 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Анализ шахматной партии</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.js"></script>
+<style>
+  :root{--bg:#262522;--panel:#312e2b;--panel2:#3d3a37;--green:#81b64c}
+  body{background:var(--bg);color:#fff;font-family:"Segoe UI",system-ui,-apple-system,Roboto,sans-serif}
+  .btn{background:var(--green);color:#fff;font-weight:700;padding:.75rem 1.4rem;border-radius:.5rem;box-shadow:0 4px 0 #5d8a35}
+  .btn:active{transform:translateY(3px);box-shadow:0 1px 0 #5d8a35}
+  .btn2{background:var(--panel2);color:#e8e8e8;padding:.55rem .9rem;border-radius:.5rem}
+  .btn2:hover{background:#4a4743} button:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px solid var(--green);outline-offset:2px}
+  .boardcol{width:min(100%,calc(100vh - 80px),720px)}
+  #board{display:grid;grid-template-columns:repeat(8,minmax(0,1fr));grid-template-rows:repeat(8,minmax(0,1fr));aspect-ratio:1;border-radius:4px;position:relative}
+  .sq{position:relative;min-width:0;min-height:0;aspect-ratio:1;display:flex;align-items:center;justify-content:center;user-select:none}
+  .sq.l{background:#f0d9b5}.sq.d{background:#b58863}
+  .sq.hl::before{content:"";position:absolute;inset:0;background:rgba(255,235,60,.42)}
+  .pc{position:relative;width:100%;height:100%;object-fit:contain;z-index:2;pointer-events:none}
+  .pcg{position:relative;line-height:1;font-size:calc(var(--s)*.82);z-index:2}
+  .pcg.w{color:#fff;-webkit-text-stroke:1.5px #222;paint-order:stroke fill}
+  .pcg.b{color:#1d1d1d;-webkit-text-stroke:1px #000}
+  #arrows{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:6}
+  .co{position:absolute;font-size:calc(var(--s)*.17);font-weight:700;z-index:1;opacity:.85}
+  .l .co{color:#b58863}.d .co{color:#f0d9b5}
+  .bd{display:inline-flex;align-items:center;justify-content:center;border-radius:50%;color:#fff;font-weight:800;font-style:normal;flex:none;line-height:1}
+  .bd.sm{width:20px;height:20px;font-size:10px}.bd.md{width:28px;height:28px;font-size:13px}
+  .bd.onb{position:absolute;top:-5%;right:-5%;width:calc(var(--s)*.42);height:calc(var(--s)*.42);font-size:calc(var(--s)*.2);z-index:5;box-shadow:0 1px 4px #0009}
+  #bar{width:26px;background:#403d39;border-radius:4px;position:relative;overflow:hidden;flex:none}
+  #barW{position:absolute;left:0;right:0;background:#f0f0f0;transition:height .35s}
+  #barT{position:absolute;left:0;right:0;text-align:center;font-size:10px;font-weight:800;padding:3px 0}
+  .mrow{display:grid;grid-template-columns:34px 1fr 1fr;align-items:center}
+  .mn{color:#8b8987;font-size:.8rem;padding-left:6px}
+  .mv{display:flex;align-items:center;gap:6px;padding:5px 8px;border-radius:5px;font-weight:600;text-align:left}
+  .mv:hover{background:var(--panel2)}.mv.on{background:#5a5755}
+  #moves{max-height:300px;overflow:auto}
+  #board{touch-action:none}
+  .sq.dot::after{content:"";position:absolute;width:30%;height:30%;border-radius:50%;background:rgba(0,0,0,.22);z-index:3}
+  .sq.cap::after{content:"";position:absolute;inset:3%;border-radius:50%;border:calc(var(--s)*.08) solid rgba(0,0,0,.22);z-index:3}
+  @media(max-width:1023px){#moves{max-height:220px}}
+</style>
+</head>
+<body>
+
+<section id="landing" class="max-w-3xl mx-auto p-5 pt-10 md:pt-16">
+  <h1 class="text-3xl md:text-4xl font-extrabold">Разбор партии</h1>
+  <p class="text-neutral-400 mt-2">Вставьте PGN. Stockfish проверит каждую позицию прямо в браузере, без сервера.</p>
+  <textarea id="pgn" rows="12" spellcheck="false" placeholder="[Event &quot;?&quot;]&#10;&#10;1. e4 e5 2. Nf3 Nc6 ..." class="w-full mt-5 p-4 rounded-lg bg-[#1f1e1b] border border-[#4a4743] font-mono text-sm focus:border-[#81b64c] outline-none"></textarea>
+  <div class="flex flex-wrap items-center gap-3 mt-4">
+    <button id="go" class="btn">Анализировать партию</button>
+    <button id="sample" class="btn2">Вставить пример</button>
+    <label class="text-neutral-400 text-sm ml-auto">Глубина
+      <select id="depth" class="ml-2 bg-[#3d3a37] text-white rounded px-2 py-1"><option>12</option><option selected>14</option><option>16</option><option>18</option><option>20</option><option>30</option><option>50</option><option>99</option><option value="245">245 (макс.)</option></select>
+    </label>
+    <label class="text-neutral-400 text-sm">Время на позицию
+      <select id="tlim" class="ml-2 bg-[#3d3a37] text-white rounded px-2 py-1"><option value="0">без лимита</option><option value="2">2 с</option><option value="5" selected>5 с</option><option value="10">10 с</option><option value="30">30 с</option><option value="60">60 с</option></select>
+    </label>
+  </div>
+  <div id="err" class="hidden mt-4 p-3 rounded-lg bg-[#5a2523] text-[#ffd2d0] text-sm"></div>
+</section>
+
+<section id="app" class="hidden p-3 lg:p-6 max-w-[1180px] mx-auto">
+  <div class="flex flex-col lg:flex-row gap-5 items-start justify-center">
+    <div class="boardcol flex gap-2">
+      <div id="bar"><div id="barW"></div><span id="barT"></span></div>
+      <div id="board" class="flex-1 min-w-0"></div>
+    </div>
+    <aside class="w-full lg:w-[380px] flex flex-col gap-3">
+      <div class="bg-[#312e2b] rounded-lg p-4">
+        <div id="names" class="font-bold"></div>
+        <div id="status" class="text-sm text-neutral-400 mt-1"></div>
+        <div class="h-1.5 bg-[#4a4743] rounded mt-2 overflow-hidden"><div id="prog" class="h-full bg-[#81b64c] transition-all" style="width:0"></div></div>
+      </div>
+      <div id="comment" class="bg-[#312e2b] rounded-lg p-4 min-h-[110px]"></div>
+      <div class="bg-[#312e2b] rounded-lg p-2"><div id="moves"></div></div>
+      <div class="flex gap-2">
+        <button class="btn2 flex-1" data-nav="start" aria-label="В начало">⏮</button>
+        <button class="btn2 flex-1" data-nav="prev" aria-label="Назад">◀</button>
+        <button class="btn2 flex-1" data-nav="next" aria-label="Вперёд">▶</button>
+        <button class="btn2 flex-1" data-nav="end" aria-label="В конец">⏭</button>
+        <button class="btn2" id="flip" aria-label="Перевернуть доску">⇅</button>
+      </div>
+      <div class="flex items-center gap-2"><button class="btn2" id="play">▶ Авто</button>
+        <select id="speed" class="bg-[#3d3a37] text-white rounded px-2 py-2"><option value="600">быстро</option><option value="1200" selected>средне</option><option value="2500">медленно</option></select>
+        <label class="ml-auto flex items-center gap-2 text-sm text-neutral-300"><input type="checkbox" id="snd" checked class="accent-[#81b64c]">Звуки</label></div>
+      <div class="text-xs text-neutral-500 px-1">Двигайте фигуры мышью — это свободный анализ. Правая кнопка мыши рисует стрелки и круги (Shift — красные, Ctrl — синие).</div>
+      <label class="flex items-start gap-2 text-sm text-neutral-300 px-1"><input type="checkbox" id="arr" checked class="mt-1 accent-[#81b64c]">
+        <span>Стрелки: <b style="color:#5aa93c">зелёная</b> — лучший ход, <b style="color:#d6382f">красная</b> — угроза соперника</span></label>
+      <label class="flex items-center gap-2 text-sm text-neutral-300 px-1"><input type="checkbox" id="voice" class="accent-[#81b64c]"><span>Озвучка важных ходов (блестящие, сильнейшие, ошибки, зевки)</span></label>
+      <div id="summary" class="bg-[#312e2b] rounded-lg p-3 text-sm"></div>
+      <button id="back" class="btn2">Новая партия</button>
+    </aside>
+  </div>
+</section>
+
+<script>
+const $=id=>document.getElementById(id);
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const SF_URLS=['https://cdnjs.cloudflare.com/ajax/libs/stockfish.js/10.0.2/stockfish.js','https://cdn.jsdelivr.net/npm/stockfish.js@10.0.2/stockfish.js'];
+const GLYPH={k:'♚',q:'♛',r:'♜',b:'♝',n:'♞',p:'♟'};
+const VAL={p:1,n:3,b:3,r:5,q:9,k:0};
+const B={
+  book:{c:'#a88865',s:'📖',t:'Теория'},
+  forced:{c:'#6fa83c',s:'➜',t:'Вынужденный ход'},
+  brilliant:{c:'#1baca6',s:'!!',t:'Блестящий ход'},
+  great:{c:'#5c8bb0',s:'!',t:'Сильнейший ход'},
+  best:{c:'#81b64c',s:'★',t:'Лучший ход'},
+  excellent:{c:'#96bc4b',s:'✓',t:'Отлично'},
+  good:{c:'#a0a79b',s:'✓',t:'Хорошо'},
+  inaccuracy:{c:'#f0a030',s:'?!',t:'Неточность'},
+  mistake:{c:'#e07a1f',s:'?',t:'Ошибка'},
+  blunder:{c:'#ca3431',s:'??',t:'Зевок'},
+  miss:{c:'#d9822b',s:'◎',t:'Упущенная возможность'}
+};
+const badge=(k,sz)=>`<i class="bd ${sz}" style="background:${B[k].c}" title="${B[k].t}">${B[k].s}</i>`;
+
+/* ---------- Движок Stockfish в Web Worker ---------- */
+const SF16='https://cdn.jsdelivr.net/npm/stockfish@16.0.0/src/stockfish-nnue-16-single';
+class Engine{
+  async init(){
+    // Порядок: современный Stockfish 16 NNUE (WASM) -> Stockfish.js 10 в Worker -> Stockfish.js 10 в основном потоке
+    const tries=[
+      ['Stockfish 16 NNUE (WASM)',()=>this.initWorker([SF16+'.js'],SF16+'.wasm',120000)],
+      ['Stockfish.js 10',()=>this.initWorker(SF_URLS,null,10000)],
+      ['Stockfish.js 10 (основной поток)',()=>this.initMain()]];
+    let last;
+    for(const[n,f]of tries){
+      try{this.reset();await f();this.name=n;this.modern=n.includes('16');break}
+      catch(e){last=e;console.warn(n,'недоступен:',e.message)}
+    }
+    if(!this.name)throw last;
+    this.send('setoption name MultiPV value 3');
+    if(this.modern)this.send('setoption name Hash value 64');
+    await this.cmd('isready','readyok');
+  }
+  reset(){if(this.w){try{this.w.terminate()}catch(_){}}this.w=null;this.waiter=null;this.search=null;this.main=false}
+  async initWorker(urls,wasm,ms){
+    let txt=null;
+    for(const u of urls){try{const r=await fetch(u);if(r.ok){txt=await r.text();break}}catch(e){}}
+    if(!txt)throw new Error('не удалось скачать движок');
+    // путь к .wasm передаётся через #hash адреса воркера (так работает сборка stockfish.js 16)
+    this.w=new Worker(URL.createObjectURL(new Blob([txt],{type:'application/javascript'}))+(wasm?'#'+wasm:''));
+    this.w.onmessage=e=>this.onMsg(String(e.data));
+    this.w.onerror=e=>console.error('Worker error',e);
+    this.send=s=>this.w.postMessage(s);
+    await this.handshake(ms);
+  }
+  async initMain(){
+    let loaded=false;
+    for(const u of SF_URLS){
+      loaded=await new Promise(res=>{const s=document.createElement('script');s.src=u;s.onload=()=>res(true);s.onerror=()=>res(false);document.head.appendChild(s)});
+      if(loaded&&(typeof STOCKFISH!=='undefined'||typeof Stockfish!=='undefined'))break;
+      loaded=false;
+    }
+    if(!loaded)throw new Error('Stockfish.js не загрузился. Скачайте index.html и откройте его локально в браузере (двойным кликом).');
+    let E=typeof STOCKFISH!=='undefined'?STOCKFISH:Stockfish;
+    if(typeof E==='function')E=await Promise.resolve(E());
+    const h=d=>this.onMsg(String(d&&d.data!==undefined?d.data:d));
+    if(typeof E.addMessageListener==='function')E.addMessageListener(h);else E.onmessage=h;
+    this.send=s=>E.postMessage(s);
+    this.main=true;
+    await this.handshake(10000);
+  }
+  async handshake(ms){
+    await Promise.race([this.cmd('uci','uciok'),new Promise((_,rej)=>setTimeout(()=>rej(new Error('движок не отвечает')),ms))]);
+  }
+  cmd(s,wait){return new Promise(res=>{this.waiter={wait,res};this.send(s)})}
+  onMsg(m){
+    if(this.waiter&&m.startsWith(this.waiter.wait)){const w=this.waiter;this.waiter=null;w.res();return}
+    if(this.search)this.search(m);
+  }
+  // depth — предел глубины (до 245), ms — предел времени (0 = без лимита); live — «живой» поиск, который можно прервать stop().
+  // Запросы выстраиваются в очередь, чтобы результаты не перемешивались.
+  analyse(fen,depth,ms,onInfo,live){
+    const run=()=>new Promise(res=>{
+      const lines={},black=fen.split(' ')[1]==='b';let dmax=0;
+      this.live=!!live;
+      this.search=m=>{
+        if(m.startsWith('info')&&m.includes(' pv ')){
+          const s=m.match(/score (cp|mate) (-?\d+)/);if(!s||/bound/.test(m))return;
+          const k=+((m.match(/multipv (\d+)/)||[0,1])[1]),dm=m.match(/ depth (\d+)/);
+          if(dm)dmax=Math.max(dmax,+dm[1]);
+          let v=+s[2];if(black)v=-v;
+          const full=m.split(' pv ')[1].trim();
+          lines[k]={type:s[1],v,pv:full.split(' ')[0],full};
+          if(onInfo)onInfo(lines,dmax);
+        }else if(m.startsWith('bestmove')){this.search=null;this.live=false;res({lines,best:m.split(' ')[1],depth:dmax})}
+      };
+      this.send('position fen '+fen);
+      this.send('go depth '+depth+(ms?' movetime '+ms:''));
+    });
+    const p=(this.q||Promise.resolve()).then(run);
+    this.q=p.catch(()=>{});
+    return p;
+  }
+  stop(){if(this.search&&this.live&&!this.main)this.send('stop')}
+}
+
+/* ---------- Состояние ---------- */
+let accs=[],liveTok=0,eng=null,runId=0,hist=[],fens=[],evals=[],cls=[],cur=0,flip=false,headers={};
+
+const cpOf=l=>l.type==='mate'?Math.sign(l.v||1)*(10000-Math.abs(l.v)*10):l.v;
+const labelOf=l=>l.type==='mate'?'M'+Math.abs(l.v):(l.v>0?'+':'')+(l.v/100).toFixed(1);
+// Сжатие оценок: в выигранных позициях разница между +6 и +9 не важна
+const ev=cp=>{const a=Math.min(Math.abs(cp)/100,10);return Math.sign(cp)*(a<=3?a:3+(a-3)*.15)};
+
+function material(c,color){
+  let s=0;for(const row of c.board())for(const p of row)if(p)s+=(p.color===color?1:-1)*VAL[p.type];return s;
+}
+function uciToMove(u){return{from:u.slice(0,2),to:u.slice(2,4),promotion:u[4]}}
+function sanOf(i,uci){
+  if(!uci||uci==='(none)')return '—';
+  const c=new Chess(fens[i]);const m=c.move(uciToMove(uci));return m?m.san:uci;
+}
+
+/* ---------- Оценка позиций ---------- */
+async function evalPos(k,depth,ms){
+  const c=new Chess(fens[k]);
+  if(c.in_checkmate())return{cp:c.turn()==='w'?-10000:10000,label:'#',lines:{},best:null,term:true};
+  if(c.game_over())return{cp:0,label:'0.0',lines:{},best:null,term:true};
+  const r=await eng.analyse(fens[k],depth,ms);
+  const l1=r.lines[1];
+  if(!l1)return{cp:0,label:'0.0',lines:{},best:r.best};
+  return{cp:cpOf(l1),label:labelOf(l1),lines:r.lines,best:r.best,d:r.depth};
+}
+
+/* ---------- Классификация хода ---------- */
+// Жертва: по лучшей линии движка мы теряем ≥3 пунктов материала, но затем
+// ставим мат, возвращаем больше материала, чем отдали, или держим позицию без потерь в оценке.
+function sacrificeInfo(i,Ea){
+  const mover=hist[i].color,c=new Chess(fens[i]),m0=material(c,mover);
+  c.move(hist[i]);
+  const l=evals[i+1]&&evals[i+1].lines&&evals[i+1].lines[1];
+  if(!l||!l.full)return false;
+  const mateFor=l.type==='mate'&&((l.v>0)===(mover==='w'));
+  const pv=l.full.split(' ').filter(Boolean).slice(0,8);if(pv.length%2)pv.pop();
+  let dip=-99,last=material(c,mover);
+  for(const u of pv){if(!c.move(uciToMove(u)))break;last=material(c,mover);dip=Math.max(dip,m0-last)}
+  if(dip<3)return false;
+  return mateFor||last>m0||(m0-last>=3&&Ea>=-.3);
+}
+// Ожидаемый результат (0..1) по оценке в сантипешках
+const wp=cp=>1/(1+Math.exp(-0.004*Math.max(-1500,Math.min(1500,cp))));
+function classify(i){
+  const mover=hist[i].color,sg=mover==='w'?1:-1,L=evals[i].lines;
+  const played=hist[i].from+hist[i].to+(hist[i].promotion||'');
+  const isBest=played===evals[i].best;
+  const cpB=evals[i].cp*sg;
+  // Оценка сыгранного хода: если он есть среди линий MultiPV той же позиции,
+  // берём её (та же глубина, нет шума); иначе оценка следующей позиции.
+  let cpA=evals[i+1].cp*sg;
+  for(const k in L)if(L[k].pv===played)cpA=cpOf(L[k])*sg;
+  if(isBest)cpA=Math.max(cpA,cpB);
+  const wpl=c=>50+50*(2/(1+Math.exp(-0.00368208*Math.max(-1500,Math.min(1500,c))))-1);
+  accs[i]=Math.max(0,Math.min(100,103.1668*Math.exp(-0.04354*(wpl(cpB)-wpl(cpA)))-3.1669));
+  const Eb=ev(cpB),Ea=ev(cpA);
+  const delta=Math.max(0,wp(cpB)-wp(cpA));
+  if(new Chess(fens[i]).moves().length===1)return'forced';
+  if(Eb>=3&&Ea<=.7&&Ea>-2)return'miss';
+  if(delta<=.06&&sacrificeInfo(i,Ea))return'brilliant';
+  if(isBest&&L[2]&&Eb<5&&wp(cpOf(L[1])*sg)-wp(cpOf(L[2])*sg)>=.15)return'great';
+  if(i<10&&delta<=.04)return'book';
+  if(isBest)return'best';
+  if(delta<=.025)return'excellent';
+  if(delta<=.06)return'good';
+  if(delta<=.12)return'inaccuracy';
+  if(delta<=.25)return'mistake';
+  return'blunder';
+}
+
+/* ---------- Текстовые пояснения ---------- */
+function explain(i){
+  const k=cls[i];if(!k)return'';
+  const best=sanOf(i,evals[i].best);
+  const L=evals[i].lines[1];
+  const mate=L&&L.type==='mate'&&((L.v>0)===(hist[i].color==='w'))?' Была возможность форсировать мат.':'';
+  let thr='';
+  if(['inaccuracy','mistake','blunder','miss'].includes(k)){
+    const th=evals[i+1]&&evals[i+1].best;
+    if(th&&th!=='(none)'){const m=new Chess(fens[i+1]).move(uciToMove(th));
+      if(m)thr=` Теперь соперник угрожает ${m.san}`+(m.san.includes('#')?' (мат!)':m.captured?' (взятие фигуры)':'')+'.'}
+  }
+  return{
+    forced:'Вынужденный ход: других легальных ходов не было.',
+    book:'Дебютный ход: оценка позиции в норме.',
+    brilliant:'Блестящая жертва! Вы верно рассчитали тактику и сохранили преимущество.',
+    great:'Сильнейший ход: он удерживает позицию, а остальные продолжения заметно слабее.',
+    best:'Это первый выбор движка.',
+    excellent:'Отличный ход, оценка почти не изменилась.',
+    good:'Хороший ход, но у движка есть чуть более точный вариант.',
+    inaccuracy:`Неточность: позиция слегка ухудшилась. Лучше было ${best}.${thr}`,
+    mistake:`Ошибка: вы упустили часть преимущества. Лучше было ${best}.${mate}${thr}`,
+    blunder:`Это зевок. Вы упустили тактическую угрозу или подставили фигуру. Лучше было ${best}.${mate}${thr}`,
+    miss:`Вы упустили возможность получить решающее преимущество. Выигрыш начинался с ${best}.${mate}${thr}`
+  }[k];
+}
+
+/* ---------- Отрисовка ---------- */
+const PIECE=p=>`https://cdn.jsdelivr.net/gh/lichess-org/lila@master/public/piece/cburnett/${p.color}${p.type.toUpperCase()}.svg`;
+function pfb(i){const s=document.createElement('span');s.className='pcg '+i.dataset.c;s.textContent=i.dataset.g+'\uFE0E';i.replaceWith(s)}
+let showArrows=true,voiceOn=false;
+const LET={a:'а',b:'бэ',c:'цэ',d:'дэ',e:'е',f:'эф',g:'гэ',h:'аш'},NM={K:'король',Q:'ферзь',R:'ладья',B:'слон',N:'конь'};
+const spoken=san=>san.startsWith('O-O-O')?'длинная рокировка':san.startsWith('O-O')?'короткая рокировка':
+  [...san].map(ch=>NM[ch]||(ch==='x'?'берёт':ch==='+'?'шах':ch==='#'?'мат':ch==='='?'превращение в':LET[ch]||ch)).join(' ');
+const SAY={brilliant:'Блестящий ход! Отличная жертва.',great:'Сильнейший ход.',miss:'Упущенная возможность.',mistake:'Ошибка.',blunder:'Зевок!'};
+function speak(){
+  if(!window.speechSynthesis)return;
+  speechSynthesis.cancel();
+  if(!voiceOn||cur<1)return;
+  const i=cur-1,k=cls[i];if(!SAY[k])return;
+  let t=SAY[k];
+  if(['miss','mistake','blunder'].includes(k)&&evals[i].best&&evals[i].best!=='(none)')t+=' Лучше было: '+spoken(sanOf(i,evals[i].best))+'.';
+  const u=new SpeechSynthesisUtterance(t);u.lang='ru-RU';
+  const v=speechSynthesis.getVoices().find(x=>x.lang&&x.lang.toLowerCase().startsWith('ru'));if(v)u.voice=v;
+  speechSynthesis.speak(u);
+}
+const pt=q=>{const f='abcdefgh'.indexOf(q[0]),r=8-+q[1];return[(flip?7-f:f)+.5,(flip?7-r:r)+.5]};
+function arrow(from,to,col){
+  const[x1,y1]=pt(from),[x2,y2]=pt(to),len=Math.hypot(x2-x1,y2-y1);if(!len)return'';
+  const ux=(x2-x1)/len,uy=(y2-y1)/len,hl=.42,hw=.38,bx=x2-ux*hl,by=y2-uy*hl;
+  return`<g opacity=".82" fill="${col}" stroke="${col}"><line x1="${x1+ux*.2}" y1="${y1+uy*.2}" x2="${bx}" y2="${by}" stroke-width=".17" stroke-linecap="round"/>`+
+  `<polygon stroke="none" points="${x2-ux*.06},${y2-uy*.06} ${bx-uy*hw/2},${by+ux*hw/2} ${bx+uy*hw/2},${by-ux*hw/2}"/></g>`;
+}
+const circle=(q,col)=>{const[x,y]=pt(q);return`<circle cx="${x}" cy="${y}" r=".45" fill="none" stroke="${col}" stroke-width=".07" opacity=".85"/>`};
+let marks={a:[],c:[]};
+function arrowsHtml(){
+  let h='';
+  if(showArrows&&!free&&cur>=1&&['inaccuracy','mistake','blunder','miss'].includes(cls[cur-1])){
+    const bm=evals[cur-1].best,th=evals[cur]&&evals[cur].best;
+    if(th&&th!=='(none)')h+=arrow(th.slice(0,2),th.slice(2,4),'#d6382f');   // угроза соперника
+    if(bm&&bm!=='(none)')h+=arrow(bm.slice(0,2),bm.slice(2,4),'#5aa93c');   // лучший ход
+  }
+  for(const c of marks.c)h+=circle(c.q,c.col);
+  for(const a of marks.a)h+=arrow(a.f,a.t,a.col);
+  return h;
+}
+let free=null,sel=null,dragging=false;
+function render(){
+  if(dragging)return;
+  const bd=$('board'),s=bd.clientWidth/8;bd.style.setProperty('--s',s+'px');
+  const g=free?free.g:new Chess(fens[cur]),b=g.board(),mv=free?free.last:(cur>0?hist[cur-1]:null),tg=sel?sel.moves:[];
+  let h='';
+  for(let r=0;r<8;r++)for(let f=0;f<8;f++){
+    const rr=flip?7-r:r,ff=flip?7-f:f,p=b[rr][ff],name='abcdefgh'[ff]+(8-rr);
+    const hl=((mv&&(mv.from===name||mv.to===name))||(sel&&sel.sq===name)?' hl':'')+(tg.includes(name)?(p?' cap':' dot'):'');
+    let inner='';
+    if(f===0)inner+=`<span class="co" style="top:2px;left:3px">${8-rr}</span>`;
+    if(r===7)inner+=`<span class="co" style="bottom:1px;right:3px">${'abcdefgh'[ff]}</span>`;
+    if(p)inner+=`<img class="pc" alt="" draggable="false" src="${PIECE(p)}" data-g="${GLYPH[p.type]}" data-c="${p.color}" onerror="pfb(this)">`;
+    if(!free&&mv&&mv.to===name&&cls[cur-1])inner+=badge(cls[cur-1],'onb');
+    h+=`<div class="sq ${(rr+ff)%2===0?'l':'d'}${hl}" data-sq="${name}">${inner}</div>`;
+  }
+  bd.innerHTML=h+`<svg id="arrows" viewBox="0 0 8 8">${arrowsHtml()}</svg>`;
+  renderBar();renderComment();renderMoves();
+}
+function renderBar(){
+  const e=free?(free.cp==null?null:{cp:free.cp,label:free.label}):evals[cur];
+  if(!e){$('barW').style.height='50%';$('barT').textContent='';return}
+  const x=ev(e.cp),pct=50+50*Math.tanh(x/4),w=$('barW');
+  w.style.height=pct+'%';w.style.top=flip?'0':'auto';w.style.bottom=flip?'auto':'0';
+  const t=$('barT'),atBottom=(e.cp>=0)===!flip;
+  t.textContent=e.label==='#'?'#':e.label.replace('+','');
+  t.style.color=e.cp>=0?'#262522':'#fff';
+  t.style.top=atBottom?'auto':'0';t.style.bottom=atBottom?'0':'auto';
+}
+function pvSan(fen,full,n){
+  const c=new Chess(fen),p=fen.split(' ');let num=+p[5]||1,w=p[1]==='w';const out=[];
+  for(const u of full.split(' ').slice(0,n)){
+    const m=c.move(uciToMove(u));if(!m)break;
+    out.push((w?num+'. ':(out.length?'':num+'... '))+m.san);
+    if(!w)num++;w=!w;
+  }
+  return out.join(' ');
+}
+function renderFree(){
+  const g=free.g,L=free.lines||{};let rows='';
+  for(const k of[1,2,3]){const l=L[k];if(!l)continue;
+    rows+=`<div class="flex gap-2 py-1 border-t border-[#4a4743] text-sm"><b class="w-12 flex-none">${labelOf(l)}</b><span class="text-neutral-300">${esc(pvSan(g.fen(),l.full,7))}</span></div>`}
+  const note=g.in_checkmate()?'Мат.':g.game_over()?'Ничья.':(rows?'':(eng?'Движок думает…':'Движок ещё загружается…'));
+  $('comment').innerHTML=`<div class="flex items-center gap-2 mb-2"><b class="text-lg">Свободный анализ</b><span class="text-xs text-neutral-400">глубина ${free.depth||'—'}</span>
+    <span class="ml-auto flex gap-2"><button class="btn2 !py-1" onclick="freeUndo()" title="Отменить ход">↶</button><button class="btn2 !py-1" onclick="freeExit()">К партии</button></span></div>${rows}<div class="text-sm text-neutral-400">${note}</div>`;
+}
+async function startLive(){
+  const tok=++liveTok,g=free.g;
+  free.lines={};free.cp=null;free.depth=0;
+  if(g.game_over()){free.cp=g.in_checkmate()?(g.turn()==='w'?-10000:10000):0;free.label=g.in_checkmate()?'#':'0.0';renderFree();renderBar();return}
+  renderFree();renderBar();
+  if(!eng)return;
+  eng.stop();
+  await eng.analyse(g.fen(),eng.main?12:60,eng.main?2500:8000,(lines,d)=>{
+    if(tok!==liveTok||!free||!lines[1])return;
+    free.lines={...lines};free.depth=d;free.cp=cpOf(lines[1]);free.label=labelOf(lines[1]);renderFree();renderBar();
+  },true);
+}
+function freeUndo(){if(!free)return;free.g.undo();free.last=null;sel=null;render();startLive()}
+function freeExit(){free=null;sel=null;liveTok++;if(eng)eng.stop();render()}
+function renderComment(){
+  const el=$('comment');
+  if(free){renderFree();return}
+  if(cur===0){el.innerHTML='<div class="text-neutral-300">Начальная позиция. Листайте ходы стрелками ← →, а чтобы попробовать свой вариант, просто подвигайте фигуры на доске.</div>';return}
+  const i=cur-1,m=hist[i],num=Math.floor(i/2)+1+(m.color==='w'?'. ':'... ');
+  const k=cls[i],e=evals[cur];
+  el.innerHTML=`<div class="flex items-center gap-3">${k?badge(k,'md'):''}<div><div class="font-bold text-lg">${num}${esc(m.san)}</div>
+    <div class="text-sm" style="color:${k?B[k].c:'#aaa'}">${k?B[k].t:'Ход ещё не проанализирован'}</div></div>
+    <div class="ml-auto text-sm font-bold bg-[#3d3a37] rounded px-2 py-1">${e?e.label:'…'}</div></div>
+    <p class="mt-3 text-neutral-200 leading-relaxed">${k?esc(explain(i)):''}</p>`;
+}
+function renderMoves(){
+  const cell=i=>{const k=cls[i];return`<button class="mv${cur===i+1&&!free?' on':''}" data-ply="${i+1}">${k?badge(k,'sm'):'<span style="width:20px"></span>'}<span>${esc(hist[i].san)}</span></button>`};
+  let h='';
+  for(let i=0;i<hist.length;i+=2)h+=`<div class="mrow"><span class="mn">${i/2+1}.</span>${cell(i)}${i+1<hist.length?cell(i+1):'<span></span>'}</div>`;
+  $('moves').innerHTML=h;
+  const on=$('moves').querySelector('.on');if(on)on.scrollIntoView({block:'nearest'});
+}
+function accOf(c){
+  const a=accs.map((x,i)=>hist[i]&&hist[i].color===c&&x!=null?x:null).filter(x=>x!=null);
+  if(!a.length)return null;
+  const ar=a.reduce((s,x)=>s+x,0)/a.length,hm=a.length/a.reduce((s,x)=>s+1/Math.max(x,1),0);
+  return(ar+hm)/2;
+}
+const RT=[[30,200],[50,600],[65,1000],[75,1300],[85,1700],[92,2100],[97,2500],[100,2800]];
+function ratingOf(a){for(let i=1;i<RT.length;i++)if(a<=RT[i][0]){const[x0,y0]=RT[i-1],[x1,y1]=RT[i];return Math.max(100,Math.round((y0+(a-x0)/(x1-x0)*(y1-y0))/50)*50)}return 2800}
+function accHtml(){
+  const card=(n,c)=>{const a=accOf(c);return a==null?'':`<div class="flex-1 bg-[#262522] rounded-lg p-3 text-center"><div class="text-xs text-neutral-400 truncate">${esc(n)}</div><div class="text-2xl font-extrabold" style="color:#81b64c">${a.toFixed(1)}%</div><div class="text-xs text-neutral-300">уровень ≈ ${ratingOf(a)}</div></div>`};
+  return`<div class="flex gap-2 mb-3">${card(headers.White||'Белые','w')}${card(headers.Black||'Чёрные','b')}</div>`;
+}
+function renderSummary(){
+  let h=accHtml()+'<div class="grid grid-cols-[1fr_48px_48px] gap-y-1.5 items-center"><span></span><span class="text-center text-neutral-400">Белые</span><span class="text-center text-neutral-400">Чёрные</span>';
+  for(const k of Object.keys(B)){
+    const n=c=>cls.filter((x,i)=>x===k&&hist[i].color===c).length;
+    h+=`<span class="flex items-center gap-2">${badge(k,'sm')}${B[k].t}</span><span class="text-center font-bold">${n('w')}</span><span class="text-center font-bold">${n('b')}</span>`;
+  }
+  $('summary').innerHTML=h+'</div>';
+}
+
+/* ---------- Запуск анализа ---------- */
+function showError(t){const e=$('err');e.textContent=t;e.classList.remove('hidden')}
+function start(){
+  $('err').classList.add('hidden');
+  const text=$('pgn').value.trim();
+  if(!text)return showError('Вставьте PGN партии в текстовое поле.');
+  let g;
+  try{g=new Chess();if(!g.load_pgn(text,{sloppy:true}))throw 0}
+  catch(e){return showError('Не удалось разобрать PGN. Проверьте, что записаны ходы в стандартной алгебраической нотации (например, 1. e4 e5 2. Nf3 Nc6) и нет синтаксических ошибок.')}
+  hist=g.history({verbose:true});
+  if(!hist.length)return showError('В PGN не найдено ни одного хода.');
+  headers=g.header();
+  const c=headers.FEN?new Chess(headers.FEN):new Chess();
+  fens=[c.fen()];
+  for(const m of hist){if(!c.move(m))return showError('Ошибка при воспроизведении партии: ход '+m.san+' недопустим.');fens.push(c.fen())}
+  evals=[];cls=[];accs=[];free=null;sel=null;cur=0;flip=false;
+  $('names').textContent=`${headers.White||'Белые'} — ${headers.Black||'Чёрные'}${headers.Result?'  ('+headers.Result+')':''}`;
+  $('summary').innerHTML='';$('prog').style.width='0';
+  $('landing').classList.add('hidden');$('app').classList.remove('hidden');
+  render();run(+$('depth').value,+$('tlim').value);
+}
+async function run(depth,tl){
+  const id=++runId,st=$('status');
+  try{
+    if(!eng){st.textContent='Загрузка Stockfish (современная версия WASM весит десятки МБ — подождите)…';const e=new Engine();await e.init();eng=e}
+  }catch(e){st.textContent='Ошибка движка: '+e.message;st.style.color='#ff8a85';return}
+  let d=eng.main?Math.min(depth,12):depth,ms=tl*1000;
+  if(eng.main)ms=Math.min(ms||3000,3000);      // в основном потоке поиск нельзя прервать — держим короткие лимиты
+  else if(d>=30&&!ms)ms=10000;                  // очень большая глубина без лимита времени не закончится никогда
+  for(let k=0;k<fens.length;k++){
+    if(id!==runId)return;
+    await new Promise(r=>setTimeout(r,20));
+    evals[k]=await evalPos(k,d,ms);
+    if(id!==runId)return;
+    if(k>0)cls[k-1]=classify(k-1);
+    $('prog').style.width=((k+1)/fens.length*100)+'%';
+    st.textContent=`Анализ: позиция ${k+1} из ${fens.length}, глубина ${evals[k].d||'—'}`+` · ${eng.name}`;
+    if(k===cur||k===cur+1||k===0)render();else renderMoves();
+  }
+  st.textContent='Анализ завершён';render();renderSummary();
+}
+
+/* ---------- Звуки (WebAudio, без файлов) ---------- */
+let AC=null,soundOn=true;
+function tone(f,t0,d,type,g){const o=AC.createOscillator(),v=AC.createGain(),t=AC.currentTime+t0;o.type=type;o.frequency.value=f;v.gain.setValueAtTime(g,t);v.gain.exponentialRampToValueAtTime(.001,t+d);o.connect(v);v.connect(AC.destination);o.start(t);o.stop(t+d)}
+function noise(d,g){const n=Math.floor(AC.sampleRate*d),b=AC.createBuffer(1,n,AC.sampleRate),a=b.getChannelData(0);for(let i=0;i<n;i++)a[i]=(Math.random()*2-1)*(1-i/n);const s=AC.createBufferSource(),v=AC.createGain();v.gain.value=g;s.buffer=b;s.connect(v);v.connect(AC.destination);s.start()}
+function sfx(m){
+  if(!soundOn||!m)return;
+  try{
+    AC=AC||new(window.AudioContext||window.webkitAudioContext)();if(AC.state==='suspended')AC.resume();
+    if(m.san.includes('#'))[523,659,784].forEach((f,i)=>tone(f,i*.11,.45,'triangle',.18));
+    else if(m.san.includes('+')){noise(.05,.3);tone(880,0,.1,'square',.06);tone(660,.1,.16,'square',.06)}
+    else if(m.captured){noise(.09,.55);tone(140,0,.14,'triangle',.3)}
+    else if(m.flags&&/[kq]/.test(m.flags)){noise(.04,.3);tone(300,0,.06,'triangle',.2);setTimeout(()=>{try{noise(.04,.3);tone(260,0,.07,'triangle',.2)}catch(e){}},120)}
+    else{noise(.04,.25);tone(320,0,.06,'triangle',.18)}
+  }catch(e){}
+}
+
+/* ---------- Навигация, анимация, автовоспроизведение ---------- */
+function animMove(from,to){
+  const bd=$('board'),el=bd.querySelector(`[data-sq="${to}"] .pc, [data-sq="${to}"] .pcg`);if(!el)return;
+  const a=pt(from),b=pt(to),s=bd.clientWidth/8;
+  el.style.zIndex=9;
+  el.animate([{transform:`translate(${(a[0]-b[0])*s}px,${(a[1]-b[1])*s}px)`},{transform:'none'}],{duration:170,easing:'ease-out'});
+}
+function go(n,noAnim){
+  const old=cur;free=null;sel=null;liveTok++;marks={a:[],c:[]};if(eng)eng.stop();
+  cur=Math.max(0,Math.min(hist.length,n));render();
+  if(!noAnim&&Math.abs(cur-old)===1){const m=hist[Math.max(cur,old)-1];cur>old?animMove(m.from,m.to):animMove(m.to,m.from)}
+  if(cur>0)sfx(hist[cur-1]);
+  speak();
+}
+let ap=null;
+function stopAuto(){clearInterval(ap);ap=null;$('play').textContent='▶ Авто'}
+function startAuto(){clearInterval(ap);$('play').textContent='⏸ Пауза';ap=setInterval(()=>{if(cur>=hist.length){stopAuto();return}go(cur+1)},+$('speed').value)}
+$('play').onclick=()=>{if(ap){stopAuto();return}if(cur>=hist.length)go(0,true);startAuto()};
+$('speed').onchange=()=>{if(ap)startAuto()};
+$('snd').onchange=e=>{soundOn=e.target.checked};
+
+document.addEventListener('keydown',e=>{
+  if($('app').classList.contains('hidden')||['TEXTAREA','SELECT','INPUT'].includes(e.target.tagName))return;
+  if(e.key==='ArrowLeft'){go(cur-1);e.preventDefault()}
+  else if(e.key==='ArrowRight'){go(cur+1);e.preventDefault()}
+  else if(e.key==='Home')go(0);else if(e.key==='End')go(hist.length);
+});
+$('moves').addEventListener('click',e=>{const b=e.target.closest('[data-ply]');if(b)go(+b.dataset.ply)});
+document.querySelectorAll('[data-nav]').forEach(b=>b.onclick=()=>{
+  const a=b.dataset.nav;go(a==='start'?0:a==='end'?hist.length:a==='prev'?cur-1:cur+1)});
+$('flip').onclick=()=>{flip=!flip;render()};
+$('arr').onchange=e=>{showArrows=e.target.checked;render()};
+$('voice').onchange=e=>{voiceOn=e.target.checked;speak()};
+
+/* ---------- Доска: перетаскивание, свободный анализ, стрелки и круги ---------- */
+const bd=$('board');let mk=null,dr=null;
+function sqAt(e){
+  const r=bd.getBoundingClientRect(),x=(e.clientX-r.left)/r.width*8,y=(e.clientY-r.top)/r.height*8;
+  if(x<0||y<0||x>=8||y>=8)return null;
+  const f=Math.floor(x),rw=Math.floor(y);return'abcdefgh'[flip?7-f:f]+(8-(flip?7-rw:rw));
+}
+function tryMove(from,to,dropped){
+  const g=free?free.g:new Chess(fens[cur]),m=g.move({from,to,promotion:'q'});   // превращение — всегда в ферзя
+  sel=null;
+  if(!m){render();return}
+  if(!free)free={g};
+  free.last=m;marks={a:[],c:[]};stopAuto();
+  render();if(!dropped)animMove(from,to);
+  sfx(m);startLive();
+}
+bd.addEventListener('contextmenu',e=>e.preventDefault());
+bd.addEventListener('pointerdown',e=>{
+  const q=sqAt(e);if(!q)return;
+  if(e.button===2){mk={from:q,col:e.shiftKey?'#d6382f':e.ctrlKey?'#3b82f6':'#f5a623'};return}
+  if(e.button!==0)return;
+  marks={a:[],c:[]};
+  const g=free?free.g:new Chess(fens[cur]);
+  if(sel&&sel.moves.includes(q)){tryMove(sel.sq,q,false);return}
+  const p=g.get(q);
+  if(p&&p.color===g.turn()){
+    sel={sq:q,moves:g.moves({square:q,verbose:true}).map(m=>m.to)};render();
+    const orig=bd.querySelector(`[data-sq="${q}"] .pc, [data-sq="${q}"] .pcg`);
+    if(orig){
+      const s=bd.getBoundingClientRect().width/8,gh=orig.cloneNode(true);
+      gh.style.cssText=`position:fixed;width:${s}px;height:${s}px;pointer-events:none;z-index:60;left:${e.clientX-s/2}px;top:${e.clientY-s/2}px;font-size:${s*.82}px;line-height:1;transform:none`;
+      document.body.appendChild(gh);orig.style.opacity=.3;dr={from:q,gh,s};dragging=true;
+    }
+  }else{sel=null;render()}
+});
+document.addEventListener('pointermove',e=>{if(dr){dr.gh.style.left=e.clientX-dr.s/2+'px';dr.gh.style.top=e.clientY-dr.s/2+'px'}});
+document.addEventListener('pointerup',e=>{
+  if(e.button===2&&mk){
+    const q=sqAt(e),m=mk;mk=null;if(!q)return;
+    const circ=q===m.from,arr=circ?marks.c:marks.a,key=circ?{q,col:m.col}:{f:m.from,t:q,col:m.col};
+    const i=arr.findIndex(x=>x.q===key.q&&x.f===key.f&&x.t===key.t&&x.col===key.col);
+    i>=0?arr.splice(i,1):arr.push(key);render();return;
+  }
+  if(dr){
+    const d=dr;dr=null;d.gh.remove();dragging=false;
+    const q=sqAt(e);
+    if(q&&q!==d.from&&sel&&sel.moves.includes(q))tryMove(d.from,q,true);else render();
+  }
+});
+
+$('go').onclick=start;
+$('back').onclick=()=>{runId++;stopAuto();liveTok++;free=null;if(window.speechSynthesis)speechSynthesis.cancel();$('app').classList.add('hidden');$('landing').classList.remove('hidden')};
+$('sample').onclick=()=>{$('pgn').value='[Event "Opera Game"]\n[White "Paul Morphy"]\n[Black "Duke of Brunswick and Count Isouard"]\n[Result "1-0"]\n\n1. e4 e5 2. Nf3 d6 3. d4 Bg4 4. dxe5 Bxf3 5. Qxf3 dxe5 6. Bc4 Nf6 7. Qb3 Qe7 8. Nc3 c6 9. Bg5 b5 10. Nxb5 cxb5 11. Bxb5+ Nbd7 12. O-O-O Rd8 13. Rxd7 Rxd7 14. Rd1 Qe6 15. Bxd7+ Nxd7 16. Qb8+ Nxb8 17. Rd8# 1-0'};
+new ResizeObserver(()=>{if(!$('app').classList.contains('hidden')&&fens.length)render()}).observe($('board'));
+</script>
+</body>
+</html>
